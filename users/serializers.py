@@ -523,6 +523,8 @@ class UserDetailSerializer(
             "city",
             "phone_number",
             "is_active",
+            "is_staff",
+            "is_superuser",
             "is_online",
             "member",
             "investor",
