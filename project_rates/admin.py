@@ -10,13 +10,19 @@ from partner_programs.models import PartnerProgramProject
 from projects.models import Project
 from users.models import Expert
 
-from .models import Criteria, ProjectExpertAssignment, ProjectScore
+from .models import (
+    Criteria,
+    ProjectEvaluation,
+    ProjectEvaluationScore,
+    ProjectExpertAssignment,
+    ProjectScore,
+)
 
 
 # Register your models here.
 @admin.register(Criteria)
 class CriteriaAdmin(admin.ModelAdmin):
-    list_display = ("id", "name", "type", "get_program_name")
+    list_display = ("id", "name", "type", "weight", "get_program_name")
     list_display_links = (
         "id",
         "name",
@@ -39,6 +45,44 @@ class ProjectScoreAdmin(admin.ModelAdmin):
 
     def get_project_name(self, obj):
         return obj.project.name
+
+
+class ProjectEvaluationScoreInline(admin.TabularInline):
+    model = ProjectEvaluationScore
+    extra = 0
+    readonly_fields = ("datetime_created", "datetime_updated")
+
+
+@admin.register(ProjectEvaluation)
+class ProjectEvaluationAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "program_project",
+        "user",
+        "status",
+        "total_score",
+        "submitted_at",
+    )
+    list_filter = ("status", "program_project__partner_program")
+    search_fields = (
+        "program_project__project__name",
+        "user__first_name",
+        "user__last_name",
+        "user__email",
+    )
+    readonly_fields = ("datetime_created", "datetime_updated")
+    inlines = [ProjectEvaluationScoreInline]
+
+
+@admin.register(ProjectEvaluationScore)
+class ProjectEvaluationScoreAdmin(admin.ModelAdmin):
+    list_display = ("id", "evaluation", "criterion", "value")
+    list_filter = ("criterion__partner_program", "criterion")
+    search_fields = (
+        "evaluation__program_project__project__name",
+        "criterion__name",
+        "evaluation__user__email",
+    )
 
 
 class ProjectExpertAssignmentBulkAddForm(forms.ModelForm):
