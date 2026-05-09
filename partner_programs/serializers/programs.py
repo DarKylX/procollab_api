@@ -9,6 +9,8 @@ from partner_programs.models import (
     PartnerProgramField,
     PartnerProgramFieldValue,
     PartnerProgramMaterial,
+    PartnerProgramProject,
+    PartnerProgramUserProfile,
 )
 from projects.models import Project
 from projects.validators import validate_project
@@ -176,6 +178,45 @@ class PartnerProgramForMemberSerializer(PartnerProgramBaseSerializerMixin):
     views_count = serializers.SerializerMethodField(method_name="count_views")
     links = serializers.SerializerMethodField(method_name="get_links")
     is_user_manager = serializers.SerializerMethodField(method_name="get_is_user_manager")
+    program_link_id = serializers.SerializerMethodField()
+    participant_project = serializers.SerializerMethodField()
+    participant_project_status = serializers.SerializerMethodField()
+    participant_project_submitted_at = serializers.SerializerMethodField()
+
+    def _get_participant_program_link(self, program: PartnerProgram):
+        cache = getattr(self, "_participant_program_link_cache", None)
+        if cache is None:
+            cache = {}
+            self._participant_program_link_cache = cache
+
+        if program.pk in cache:
+            return cache[program.pk]
+
+        user = self.context.get("user")
+        if not user or not user.is_authenticated:
+            cache[program.pk] = None
+            return None
+
+        link = (
+            PartnerProgramProject.objects.select_related("project")
+            .filter(partner_program=program, project__leader=user)
+            .first()
+        )
+        if not link:
+            profile = (
+                PartnerProgramUserProfile.objects.select_related("project")
+                .filter(partner_program=program, user=user)
+                .first()
+            )
+            if profile and profile.project_id:
+                link = (
+                    PartnerProgramProject.objects.select_related("project")
+                    .filter(partner_program=program, project=profile.project)
+                    .first()
+                )
+
+        cache[program.pk] = link
+        return link
 
     def count_views(self, program):
         return get_views_count(program)
@@ -191,6 +232,48 @@ class PartnerProgramForMemberSerializer(PartnerProgramBaseSerializerMixin):
         if user:
             return is_fan(obj, user)
         return False
+
+    def get_program_link_id(self, program: PartnerProgram):
+        link = self._get_participant_program_link(program)
+        return link.id if link else None
+
+    def get_participant_project(self, program: PartnerProgram):
+        link = self._get_participant_program_link(program)
+        if not link or not link.project:
+            return None
+
+        project = link.project
+        return {
+            "id": project.id,
+            "name": project.name or "",
+            "description": project.description or "",
+            "short_description": project.get_short_description() or "",
+            "image_address": project.image_address or "",
+            "cover_image_address": project.cover_image_address or "",
+            "presentation_address": project.presentation_address or "",
+            "draft": project.draft,
+            "partner_program": {
+                "program_link_id": link.id,
+                "program_id": link.partner_program_id,
+                "is_submitted": link.submitted,
+                "submitted": link.submitted,
+                "submitted_at": link.datetime_submitted.isoformat()
+                if link.datetime_submitted
+                else None,
+            },
+        }
+
+    def get_participant_project_status(self, program: PartnerProgram) -> str:
+        link = self._get_participant_program_link(program)
+        if not link:
+            return "not_linked"
+        return "submitted" if link.submitted else "not_submitted"
+
+    def get_participant_project_submitted_at(self, program: PartnerProgram):
+        link = self._get_participant_program_link(program)
+        if not link or not link.datetime_submitted:
+            return None
+        return link.datetime_submitted.isoformat()
 
     class Meta:
         model = PartnerProgram
@@ -217,6 +300,10 @@ class PartnerProgramForMemberSerializer(PartnerProgramBaseSerializerMixin):
             "participation_format",
             "project_team_min_size",
             "project_team_max_size",
+            "program_link_id",
+            "participant_project",
+            "participant_project_status",
+            "participant_project_submitted_at",
             "is_user_manager",
             "courses",
         )
