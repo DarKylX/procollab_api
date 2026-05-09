@@ -6,7 +6,14 @@ from django.dispatch import receiver
 from django.template.loader import render_to_string
 from django_rest_passwordreset.signals import reset_password_token_created
 
-from users.models import CustomUser, Expert, Investor, Member, Mentor
+from users.models import (
+    CustomUser,
+    Expert,
+    Investor,
+    Member,
+    Mentor,
+    UserNotificationPreferences,
+)
 
 
 @receiver(post_save, sender=CustomUser)
@@ -40,6 +47,12 @@ def update_dataset_migration_applied(sender, instance, **kwargs):
 
     # Delayed execution until transaction completes.
     transaction.on_commit(update_migration)
+
+
+@receiver(post_save, sender=CustomUser)
+def create_notification_preferences(sender, instance, created, **kwargs):
+    if created:
+        UserNotificationPreferences.objects.get_or_create(user=instance)
 
 
 @receiver(reset_password_token_created)

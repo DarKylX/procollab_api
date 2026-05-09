@@ -12,6 +12,7 @@ from users.views import (
     UserLeaderProjectsList,
     UserProjectsList,
     UserList,
+    UserNotificationPreferencesView,
     UserTypesView,
     VerifyEmail,
     LogoutView,
@@ -57,6 +58,11 @@ urlpatterns = [
     path("users/<int:user_pk>/news/<int:pk>/set_liked/", NewsDetailSetLiked.as_view()),
     path("users/<int:user_pk>/approve_skill/<int:skill_pk>/", UserSkillsApproveDeclineView.as_view()),
     path("users/current/", CurrentUser.as_view()),
+    path(
+        "users/me/notification-preferences/",
+        UserNotificationPreferencesView.as_view(),
+        name="user-notification-preferences",
+    ),
     # todo: change password view
     path("users/current/programs/", CurrentUserPrograms.as_view()),
     path("users/current/programs/tags/", CurrentUserProgramsTags.as_view()),

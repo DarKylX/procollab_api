@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ title }}</title>
+  </head>
+  <body style="margin:0;padding:0;background:#f7f5ff;font-family:Arial,Helvetica,sans-serif;color:#15172f;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f7f5ff;padding:32px 16px;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px;background:#ffffff;border:1px solid #e8e1ff;border-radius:16px;overflow:hidden;">
+            <tr>
+              <td style="padding:28px 32px 12px;">
+                <div style="font-size:24px;font-weight:700;letter-spacing:0;color:#15172f;">PROCOLLAB</div>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:12px 32px 4px;">
+                <h1 style="margin:0;font-size:28px;line-height:1.25;font-weight:700;color:#15172f;">{{ title }}</h1>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:12px 32px 8px;">
+                <p style="margin:0;font-size:17px;line-height:1.55;color:#35384d;">{{ message }}</p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:12px 32px;">
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border:1px solid #e8e1ff;border-radius:12px;background:#fbfaff;">
+                  {% if program_title %}
+                  <tr>
+                    <td style="padding:16px 20px;color:#6f7285;font-size:15px;">Чемпионат</td>
+                    <td style="padding:16px 20px;color:#15172f;font-size:15px;font-weight:700;text-align:right;">{{ program_title }}</td>
+                  </tr>
+                  {% endif %}
+                  {% if company_name %}
+                  <tr>
+                    <td style="padding:16px 20px;color:#6f7285;font-size:15px;">Компания</td>
+                    <td style="padding:16px 20px;color:#15172f;font-size:15px;font-weight:700;text-align:right;">{{ company_name }}</td>
+                  </tr>
+                  {% endif %}
+                  {% if organizer_name %}
+                  <tr>
+                    <td style="padding:16px 20px;color:#6f7285;font-size:15px;">Организатор</td>
+                    <td style="padding:16px 20px;color:#15172f;font-size:15px;font-weight:700;text-align:right;">{{ organizer_name }}</td>
+                  </tr>
+                  {% endif %}
+                  {% if submitted_at %}
+                  <tr>
+                    <td style="padding:16px 20px;color:#6f7285;font-size:15px;">Дата отправки</td>
+                    <td style="padding:16px 20px;color:#15172f;font-size:15px;font-weight:700;text-align:right;">{{ submitted_at }}</td>
+                  </tr>
+                  {% endif %}
+                  {% if project_count %}
+                  <tr>
+                    <td style="padding:16px 20px;color:#6f7285;font-size:15px;">Количество проектов</td>
+                    <td style="padding:16px 20px;color:#7b4dff;font-size:20px;font-weight:700;text-align:right;">{{ project_count }}</td>
+                  </tr>
+                  {% endif %}
+                  {% if evaluation_deadline %}
+                  <tr>
+                    <td style="padding:16px 20px;color:#6f7285;font-size:15px;">Дедлайн оценки</td>
+                    <td style="padding:16px 20px;color:#7b4dff;font-size:18px;font-weight:700;text-align:right;">{{ evaluation_deadline }}</td>
+                  </tr>
+                  {% endif %}
+                </table>
+              </td>
+            </tr>
+            {% if reason or comment %}
+            <tr>
+              <td style="padding:8px 32px 12px;">
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-radius:12px;background:#fff8ed;">
+                  {% if reason %}
+                  <tr>
+                    <td style="padding:16px 20px;color:#a75c00;font-size:15px;font-weight:700;">Причина</td>
+                    <td style="padding:16px 20px;color:#15172f;font-size:15px;text-align:right;">{{ reason }}</td>
+                  </tr>
+                  {% endif %}
+                  {% if comment %}
+                  <tr>
+                    <td style="padding:16px 20px;color:#6f7285;font-size:15px;font-weight:700;">Комментарий</td>
+                    <td style="padding:16px 20px;color:#15172f;font-size:15px;text-align:right;">{{ comment }}</td>
+                  </tr>
+                  {% endif %}
+                </table>
+              </td>
+            </tr>
+            {% endif %}
+            <tr>
+              <td align="center" style="padding:20px 32px 36px;">
+                <a href="{{ cta_url }}" style="display:inline-block;padding:15px 30px;background:#7b4dff;color:#ffffff;border-radius:10px;text-decoration:none;font-size:16px;font-weight:700;">{{ cta_label }}</a>
+              </td>
+            </tr>
+          </table>
+          <p style="margin:18px 0 0;color:#8d8fa3;font-size:13px;">Это автоматическое письмо PROCOLLAB.</p>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>

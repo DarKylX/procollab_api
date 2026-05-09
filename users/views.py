@@ -20,6 +20,7 @@ from rest_framework.generics import (
     ListAPIView,
     ListCreateAPIView,
     RetrieveAPIView,
+    RetrieveUpdateAPIView,
     RetrieveUpdateDestroyAPIView,
 )
 from rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated
@@ -47,7 +48,12 @@ from users.constants import (
     VERIFY_EMAIL_REDIRECT_URL,
 )
 from users.helpers import check_related_fields_update, force_verify_user, verify_email
-from users.models import LikesOnProject, UserAchievement, UserSkillConfirmation
+from users.models import (
+    LikesOnProject,
+    UserAchievement,
+    UserNotificationPreferences,
+    UserSkillConfirmation,
+)
 from users.permissions import IsAchievementOwnerOrReadOnly
 from users.serializers import (
     AchievementDetailSerializer,
@@ -59,6 +65,7 @@ from users.serializers import (
     UserApproveSkillResponse,
     UserDetailSerializer,
     UserListSerializer,
+    UserNotificationPreferencesSerializer,
     UserProjectListSerializer,
     UserSkillConfirmationSerializer,
     UserSubscribedProjectsSerializer,
@@ -258,6 +265,18 @@ class CurrentUser(GenericAPIView):
         user = request.user
         serializer = self.get_serializer(user)
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class UserNotificationPreferencesView(RetrieveUpdateAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = UserNotificationPreferencesSerializer
+    http_method_names = ["get", "patch", "head", "options"]
+
+    def get_object(self):
+        preferences, _ = UserNotificationPreferences.objects.get_or_create(
+            user=self.request.user
+        )
+        return preferences
 
 
 class UserTypesView(APIView):
