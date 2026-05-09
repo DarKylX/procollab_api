@@ -23,6 +23,10 @@ from core.utils import (
     build_xlsx_download_response,
     sanitize_excel_value,
 )
+from partner_programs.analytics import (
+    build_program_analytics_payload,
+    build_program_analytics_xlsx,
+)
 from partner_programs.helpers import date_to_iso
 from partner_programs.models import (
     PartnerProgram,
@@ -774,6 +778,27 @@ class PartnerProgramProjectsAPIView(generics.ListAPIView):
 
         program = get_object_or_404(PartnerProgram, pk=self.kwargs["pk"])
         return Project.objects.filter(program_links__partner_program=program).distinct()
+
+
+class PartnerProgramAnalyticsAPIView(APIView):
+    permission_classes = [IsAdminOrManagerOfProgram]
+
+    def get(self, request, pk: int):
+        program = get_object_or_404(PartnerProgram, pk=pk)
+        payload = build_program_analytics_payload(program)
+        payload["verification_status"] = program.verification_status
+        return Response(payload, status=status.HTTP_200_OK)
+
+
+class PartnerProgramAnalyticsExportAPIView(APIView):
+    permission_classes = [IsAdminOrManagerOfProgram]
+
+    def get(self, request, pk: int):
+        program = get_object_or_404(PartnerProgram, pk=pk)
+        binary_data = build_program_analytics_xlsx(program, include_contacts=False)
+        date_suffix = timezone.now().strftime("%d.%m.%y")
+        base_name = f"analytics - {program.name or 'program'} - {date_suffix}"
+        return build_xlsx_download_response(binary_data, base_name=base_name)
 
 
 class PartnerProgramExportRatesAPIView(APIView):

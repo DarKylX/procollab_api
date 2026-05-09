@@ -3,6 +3,8 @@ from django.urls import path
 from news.views import NewsDetail, NewsDetailSetLiked, NewsDetailSetViewed, NewsList
 from partner_programs.views import (
     ActiveLegalDocumentsView,
+    PartnerProgramAnalyticsAPIView,
+    PartnerProgramAnalyticsExportAPIView,
     PartnerProgramCreateUserAndRegister,
     PartnerProgramDataSchema,
     PartnerProgramDetail,
@@ -70,6 +72,16 @@ urlpatterns = [
         "<int:pk>/projects/",
         PartnerProgramProjectsAPIView.as_view(),
         name="partner-program-projects",
+    ),
+    path(
+        "<int:pk>/analytics/",
+        PartnerProgramAnalyticsAPIView.as_view(),
+        name="partner-program-analytics",
+    ),
+    path(
+        "<int:pk>/analytics/export/",
+        PartnerProgramAnalyticsExportAPIView.as_view(),
+        name="partner-program-analytics-export",
     ),
     path(
         "<int:pk>/projects/apply/",
