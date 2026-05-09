@@ -1,6 +1,13 @@
 FROM python:3.11
 
-RUN apt update --no-install-recommends -y
+RUN apt update --no-install-recommends -y \
+    && apt install --no-install-recommends -y \
+        libcairo2 \
+        libpango-1.0-0 \
+        libpangoft2-1.0-0 \
+        libgdk-pixbuf2.0-0 \
+        shared-mime-info \
+    && rm -rf /var/lib/apt/lists/*
 
 ENV PYTHONFAULTHANDLER=1 \
     PYTHONUNBUFFERED=1 \
@@ -28,6 +35,8 @@ RUN mkdir /procollab/static
 COPY . /procollab/
 
 RUN DJANGO_SECRET_KEY=build-time-secret \
+    DEBUG=True \
+    FILE_STORAGE=local \
     DATABASE_NAME=postgres \
     DATABASE_USER=postgres \
     DATABASE_PASSWORD=postgres \

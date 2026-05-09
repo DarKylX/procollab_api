@@ -1,24 +1,41 @@
 import time
+from io import BytesIO
+from pathlib import Path
 from abc import ABC, abstractmethod
+from urllib.parse import urljoin
+from urllib.parse import urlparse
 
 import requests
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ImproperlyConfigured
 from django.core.files.uploadedfile import InMemoryUploadedFile, TemporaryUploadedFile
+from django.utils.text import get_valid_filename
 from requests import Response
 
 from files.constants import SUPPORTED_IMAGES_TYPES
 from files.exceptions import SelectelUploadError
 from files.helpers import convert_image_to_webp
 from files.typings import FileInfo
-from procollab.settings import SELECTEL_SWIFT_URL
 
 User = get_user_model()
 
 
+def iter_file_chunks(buffer, chunk_size: int = 1024 * 1024):
+    if hasattr(buffer, "read"):
+        for chunk in iter(lambda: buffer.read(chunk_size), b""):
+            yield chunk
+        return
+
+    yield bytes(buffer)
+
+
 class File:
     def __init__(
-        self, file: TemporaryUploadedFile | InMemoryUploadedFile, quality: int = 70
+        self,
+        file: TemporaryUploadedFile | InMemoryUploadedFile,
+        quality: int = 70,
+        convert_images: bool = True,
     ):
         self.size = file.size
         self.name = File._get_name(file)
@@ -27,9 +44,9 @@ class File:
         self.content_type = file.content_type
 
         # we can compress given type of image
-        if self.content_type in SUPPORTED_IMAGES_TYPES:
+        if convert_images and self.content_type in SUPPORTED_IMAGES_TYPES:
             webp_image = convert_image_to_webp(file, quality)
-            self.buffer = webp_image.buffer()
+            self.buffer = BytesIO(bytes(webp_image.buffer()))
             self.size = webp_image.size
             self.content_type = "image/webp"
             self.extension = "webp"
@@ -59,6 +76,18 @@ class Storage(ABC):
 
 
 class SelectelSwiftStorage(Storage):
+    def __init__(self) -> None:
+        required_settings = (
+            "SELECTEL_SWIFT_URL",
+            "SELECTEL_CONTAINER_USERNAME",
+            "SELECTEL_CONTAINER_PASSWORD",
+        )
+        missing = [name for name in required_settings if not getattr(settings, name, "")]
+        if missing:
+            raise ImproperlyConfigured(
+                "Selectel storage is not configured: " + ", ".join(missing)
+            )
+
     def delete(self, url: str) -> Response:
         token = self._get_auth_token()
         return requests.delete(url, headers={"X-Auth-Token": token})
@@ -95,7 +124,7 @@ class SelectelSwiftStorage(Storage):
             url: str looks like /hashedEmail/hashedFilename_hashedTime.extension
         """
         return (
-            f"{SELECTEL_SWIFT_URL}"
+            f"{settings.SELECTEL_SWIFT_URL}"
             f"{abs(hash(user.email))}"
             f"/{abs(hash(file.name))}"
             f"_{abs(hash(time.time()))}"
@@ -129,6 +158,61 @@ class SelectelSwiftStorage(Storage):
         return response.headers["x-subject-token"]
 
 
+class LocalFileSystemStorage(Storage):
+    def delete(self, url: str) -> Response | None:
+        parsed_url = urlparse(url)
+        media_url = settings.MEDIA_URL.rstrip("/") + "/"
+        if not parsed_url.path.startswith(media_url):
+            return None
+
+        relative_path = parsed_url.path.removeprefix(media_url)
+        file_path = (Path(settings.MEDIA_ROOT) / relative_path).resolve()
+        media_root = Path(settings.MEDIA_ROOT).resolve()
+
+        if media_root not in file_path.parents and file_path != media_root:
+            return None
+
+        file_path.unlink(missing_ok=True)
+        return None
+
+    def upload(self, file: File, user: User) -> FileInfo:
+        relative_path = self._generate_relative_path(file, user)
+        file_path = Path(settings.MEDIA_ROOT) / relative_path
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+
+        with file_path.open("wb") as destination:
+            for chunk in iter_file_chunks(file.buffer):
+                destination.write(chunk)
+
+        return FileInfo(
+            url=urljoin(
+                settings.LOCAL_MEDIA_BASE_URL.rstrip("/") + "/",
+                f"{settings.MEDIA_URL.lstrip('/')}{relative_path.as_posix()}",
+            ),
+            name=file.name,
+            extension=file.extension,
+            mime_type=file.content_type,
+            size=file.size,
+        )
+
+    def _generate_relative_path(self, file: File, user: User) -> Path:
+        filename = get_valid_filename(file.name) or "file"
+        extension = get_valid_filename(file.extension)
+        stored_filename = (
+            f"{abs(hash(filename))}_{abs(hash(time.time()))}"
+            f"{f'.{extension}' if extension else ''}"
+        )
+        return Path("uploads") / str(abs(hash(user.email))) / stored_filename
+
+
+def get_default_storage() -> Storage:
+    if getattr(settings, "FILE_STORAGE", "local") == "local":
+        return LocalFileSystemStorage()
+    if settings.FILE_STORAGE == "selectel":
+        return SelectelSwiftStorage()
+    raise ImproperlyConfigured("FILE_STORAGE must be either 'local' or 'selectel'.")
+
+
 class CDN:
     def __init__(self, storage: Storage) -> None:
         self.storage = storage
@@ -141,5 +225,9 @@ class CDN:
         file: TemporaryUploadedFile | InMemoryUploadedFile,
         user: User,
         quality: int = 70,
+        preserve_original: bool = False,
     ) -> FileInfo:
-        return self.storage.upload(File(file, quality), user)
+        return self.storage.upload(
+            File(file, quality, convert_images=not preserve_original),
+            user,
+        )
