@@ -26,6 +26,10 @@ app.conf.beat_schedule = {
         "task": "partner_programs.tasks.publish_finished_program_projects_task",
         "schedule": crontab(minute=0, hour=6),
     },
+    "freeze_stale_programs": {
+        "task": "moderation.tasks.freeze_stale_programs",
+        "schedule": crontab(minute=0, hour=6),
+    },
     "complete_finished_programs": {
         "task": "certificates.tasks.complete_finished_programs",
         "schedule": crontab(minute=30, hour=6),
