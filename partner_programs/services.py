@@ -185,18 +185,60 @@ def _leader_full_name(user):
 
 
 def _calc_team_size(project):
-    prefetched_collaborators = getattr(project, "_prefetched_collaborators", None)
-    if prefetched_collaborators is not None:
-        return 1 + len(prefetched_collaborators)
+    member_keys: set[tuple[str, int | str]] = set()
 
+    leader_id = getattr(project, "leader_id", None)
+    if leader_id is not None:
+        member_keys.add(("user", leader_id))
+    elif getattr(project, "leader", None) is not None:
+        member_keys.add(("object", str(id(project.leader))))
+
+    collaborators = getattr(project, "_prefetched_collaborators", None)
     try:
-        if hasattr(project, "get_collaborators_user_list"):
-            return 1 + len(project.get_collaborators_user_list())
-        if hasattr(project, "collaborator_set"):
-            return 1 + project.collaborator_set.count()
+        if collaborators is None and hasattr(project, "collaborator_set"):
+            collaborators = project.collaborator_set.select_related("user").all()
+        elif collaborators is None and hasattr(project, "get_collaborators_user_list"):
+            collaborators = project.get_collaborators_user_list()
     except Exception:
-        pass
-    return 1
+        collaborators = []
+
+    for collaborator in collaborators or []:
+        user = getattr(collaborator, "user", collaborator)
+        user_id = getattr(user, "id", None)
+        if user_id is not None:
+            member_keys.add(("user", user_id))
+        elif user is not None:
+            member_keys.add(("object", str(id(user))))
+
+    return len(member_keys) or 1
+
+
+def validate_project_team_size_for_program(
+    *, program: PartnerProgram, project: Project
+) -> None:
+    """Validate a linked project against the championship participation rules."""
+    team_size = _calc_team_size(project)
+
+    if (
+        program.participation_format
+        == PartnerProgram.PARTICIPATION_FORMAT_INDIVIDUAL
+        and team_size != 1
+    ):
+        raise ValueError(
+            "For individual participation, the project must have exactly one member."
+        )
+
+    if program.participation_format == PartnerProgram.PARTICIPATION_FORMAT_TEAM:
+        min_size = program.project_team_min_size or 1
+        max_size = program.project_team_max_size
+        if team_size < min_size:
+            raise ValueError(
+                f"The project team must include at least {min_size} member(s)."
+            )
+        if max_size is not None and team_size > max_size:
+            raise ValueError(
+                f"The project team must include no more than {max_size} member(s)."
+            )
 
 
 def _team_members(project) -> str:

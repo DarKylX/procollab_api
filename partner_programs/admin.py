@@ -79,6 +79,8 @@ class PartnerProgramAdmin(admin.ModelAdmin):
                     "is_competitive",
                     "projects_availability",
                     "publish_projects_after_finish",
+                    "participation_format",
+                    ("project_team_min_size", "project_team_max_size"),
                     "max_project_rates",
                     "is_distributed_evaluation",
                     "draft",
