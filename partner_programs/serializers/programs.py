@@ -44,11 +44,31 @@ def _company_summary(company):
     }
 
 
+def _verified_company_name(program: PartnerProgram) -> str:
+    if program.verification_status != PartnerProgram.VERIFICATION_STATUS_VERIFIED:
+        return ""
+
+    from partner_programs.verification_services import (
+        latest_approved_verification_request,
+    )
+
+    request = latest_approved_verification_request(program)
+    if request and request.company_name:
+        return request.company_name
+    return program.company.name if program.company_id and program.company else ""
+
+
+def _is_verified(program: PartnerProgram) -> bool:
+    return program.verification_status == PartnerProgram.VERIFICATION_STATUS_VERIFIED
+
+
 class PartnerProgramListSerializer(serializers.ModelSerializer):
     """Serializer for PartnerProgram model for list view."""
 
     company = serializers.SerializerMethodField()
     company_name = serializers.SerializerMethodField()
+    is_verified = serializers.SerializerMethodField()
+    verified_company_name = serializers.SerializerMethodField()
     likes_count = serializers.SerializerMethodField(method_name="count_likes")
     views_count = serializers.SerializerMethodField(method_name="count_views")
     short_description = serializers.SerializerMethodField(
@@ -98,17 +118,26 @@ class PartnerProgramListSerializer(serializers.ModelSerializer):
     def get_company_name(self, program):
         return program.company.name if program.company_id and program.company else ""
 
+    def get_is_verified(self, program: PartnerProgram) -> bool:
+        return _is_verified(program)
+
+    def get_verified_company_name(self, program: PartnerProgram) -> str:
+        return _verified_company_name(program)
+
     class Meta:
         model = PartnerProgram
         fields = (
             "id",
             "status",
+            "verification_status",
+            "is_verified",
             "name",
             "city",
             "image_address",
             "short_description",
             "company",
             "company_name",
+            "verified_company_name",
             "registration_link",
             "datetime_registration_ends",
             "datetime_project_submission_ends",
@@ -137,6 +166,8 @@ class PartnerProgramBaseSerializerMixin(serializers.ModelSerializer):
     courses = serializers.SerializerMethodField()
     company = serializers.SerializerMethodField()
     company_name = serializers.SerializerMethodField()
+    is_verified = serializers.SerializerMethodField()
+    verified_company_name = serializers.SerializerMethodField()
 
     def get_materials(self, program: PartnerProgram):
         materials = program.materials.all()
@@ -181,6 +212,12 @@ class PartnerProgramBaseSerializerMixin(serializers.ModelSerializer):
 
     def get_company_name(self, program: PartnerProgram) -> str:
         return program.company.name if program.company_id and program.company else ""
+
+    def get_is_verified(self, program: PartnerProgram) -> bool:
+        return _is_verified(program)
+
+    def get_verified_company_name(self, program: PartnerProgram) -> str:
+        return _verified_company_name(program)
 
     class Meta:
         abstract = True
@@ -294,12 +331,15 @@ class PartnerProgramForMemberSerializer(PartnerProgramBaseSerializerMixin):
         fields = (
             "id",
             "status",
+            "verification_status",
+            "is_verified",
             "name",
             "tag",
             "description",
             "city",
             "company",
             "company_name",
+            "verified_company_name",
             "links",
             "materials",
             "image_address",
@@ -331,11 +371,14 @@ class PartnerProgramForUnregisteredUserSerializer(PartnerProgramBaseSerializerMi
         fields = (
             "id",
             "status",
+            "verification_status",
+            "is_verified",
             "name",
             "tag",
             "city",
             "company",
             "company_name",
+            "verified_company_name",
             "materials",
             "image_address",
             "cover_image_address",

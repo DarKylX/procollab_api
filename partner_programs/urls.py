@@ -15,6 +15,8 @@ from partner_programs.views import (
     PartnerProgramRegister,
     PartnerProgramSetLiked,
     PartnerProgramSetViewed,
+    PartnerProgramVerificationStatusView,
+    PartnerProgramVerificationSubmitView,
     ProgramFiltersAPIView,
     ProgramProjectFilterAPIView,
 )
@@ -37,6 +39,16 @@ urlpatterns = [
     path("<int:pk>/schema/", PartnerProgramDataSchema.as_view()),
     path("<int:pk>/register/", PartnerProgramRegister.as_view()),
     path("<int:pk>/register_new/", PartnerProgramCreateUserAndRegister.as_view()),
+    path(
+        "<int:pk>/verification/",
+        PartnerProgramVerificationStatusView.as_view(),
+        name="program-verification-status",
+    ),
+    path(
+        "<int:pk>/verification/submit/",
+        PartnerProgramVerificationSubmitView.as_view(),
+        name="program-verification-submit",
+    ),
     path("<int:pk>/set_liked/", PartnerProgramSetLiked.as_view()),
     path("<int:pk>/set_viewed/", PartnerProgramSetViewed.as_view()),
     path("<int:partnerprogram_pk>/news/", NewsList.as_view()),

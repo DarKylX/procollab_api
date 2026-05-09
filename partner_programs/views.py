@@ -37,6 +37,7 @@ from partner_programs.permissions import (
     IsProjectLeader,
 )
 from partner_programs.serializers import (
+    CompanyBriefSerializer,
     LegalDocumentSerializer,
     PartnerProgramDataSchemaSerializer,
     PartnerProgramFieldSerializer,
@@ -46,6 +47,8 @@ from partner_programs.serializers import (
     PartnerProgramNewUserSerializer,
     PartnerProgramProjectApplySerializer,
     PartnerProgramUserSerializer,
+    PartnerProgramVerificationStatusSerializer,
+    PartnerProgramVerificationSubmitSerializer,
     ProgramProjectFilterRequestSerializer,
 )
 from partner_programs.privacy import (
@@ -61,13 +64,31 @@ from partner_programs.services import (
     validate_project_team_size_for_program,
 )
 from partner_programs.utils import filter_program_projects_by_field_name
-from projects.models import Collaborator, Project
+from partner_programs.verification_services import (
+    VerificationTransitionError,
+    submit_verification_request,
+)
+from projects.models import Collaborator, Company, Project
 from partner_programs.serializers import PartnerProgramFieldValueUpdateSerializer
 from projects.serializers import ProjectListSerializer
 from vacancy.mapping import MessageTypeEnum, UserProgramRegisterParams
 from vacancy.tasks import send_email
 
 User = get_user_model()
+
+
+class CompanySearchView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        query = (request.query_params.get("query") or "").strip()
+        qs = Company.objects.all()
+        if query:
+            qs = qs.filter(Q(name__icontains=query) | Q(inn__icontains=query))
+        return Response(
+            CompanyBriefSerializer(qs.order_by("name", "id")[:20], many=True).data,
+            status=status.HTTP_200_OK,
+        )
 
 
 class ActiveLegalDocumentsView(generics.ListAPIView):
@@ -107,6 +128,12 @@ class PartnerProgramList(generics.ListCreateAPIView):
         status_filter = self.request.query_params.get("status")
         if status_filter:
             qs = qs.filter(status=status_filter)
+
+        verified_only = self.request.query_params.get("verified_only", "").lower()
+        if verified_only in {"1", "true", "yes"}:
+            qs = qs.filter(
+                verification_status=PartnerProgram.VERIFICATION_STATUS_VERIFIED
+            )
 
         user = self.request.user
         if not user.is_authenticated:
@@ -148,6 +175,58 @@ class PartnerProgramDetail(generics.RetrieveAPIView):
         if request.user.is_authenticated:
             add_view(program, request.user)
         return Response(data, status=status.HTTP_200_OK)
+
+
+class PartnerProgramVerificationStatusView(APIView):
+    permission_classes = [IsAuthenticated, IsAdminOrManagerOfProgram]
+
+    def get(self, request, pk):
+        program = get_object_or_404(PartnerProgram, pk=pk)
+        payload = PartnerProgramVerificationStatusSerializer.build_payload(
+            program,
+            user=request.user,
+        )
+        return Response(
+            PartnerProgramVerificationStatusSerializer(payload).data,
+            status=status.HTTP_200_OK,
+        )
+
+
+class PartnerProgramVerificationSubmitView(APIView):
+    permission_classes = [IsAuthenticated, IsAdminOrManagerOfProgram]
+
+    def post(self, request, pk):
+        program = get_object_or_404(PartnerProgram, pk=pk)
+        serializer = PartnerProgramVerificationSubmitSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        try:
+            submit_verification_request(
+                program=program,
+                author=request.user,
+                **data,
+            )
+        except VerificationTransitionError as exc:
+            return Response(
+                {
+                    "detail": "Заявка уже находится на рассмотрении"
+                    if exc.current_status == PartnerProgram.VERIFICATION_STATUS_PENDING
+                    else "Компания уже подтверждена",
+                    "current_status": exc.current_status,
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        program.refresh_from_db()
+        payload = PartnerProgramVerificationStatusSerializer.build_payload(
+            program,
+            user=request.user,
+        )
+        return Response(
+            PartnerProgramVerificationStatusSerializer(payload).data,
+            status=status.HTTP_201_CREATED,
+        )
 
 
 class PartnerProgramProjectApplyView(GenericAPIView):

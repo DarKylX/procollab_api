@@ -19,6 +19,7 @@ from partner_programs.models import (
     PartnerProgramProject,
     PartnerProgramParticipantConsent,
     PartnerProgramUserProfile,
+    PartnerProgramVerificationRequest,
 )
 from partner_programs.services import prepare_project_scores_export_data
 
@@ -70,6 +71,18 @@ class PartnerProgramFieldInline(admin.TabularInline):
     extra = 0
 
 
+class PartnerProgramVerificationRequestInline(admin.StackedInline):
+    model = PartnerProgramVerificationRequest
+    extra = 0
+    readonly_fields = (
+        "submitted_at",
+        "decided_at",
+        "decided_by",
+        "datetime_updated",
+    )
+    autocomplete_fields = ("company", "initiator", "decided_by", "documents")
+
+
 @admin.register(PartnerProgram)
 class PartnerProgramAdmin(admin.ModelAdmin):
     class PartnerProgramAdminForm(forms.ModelForm):
@@ -83,9 +96,22 @@ class PartnerProgramAdmin(admin.ModelAdmin):
                 "city": forms.TextInput(attrs={"size": 80}),
             }
 
-    inlines = [PartnerProgramMaterialInline, PartnerProgramFieldInline]
+    inlines = [
+        PartnerProgramMaterialInline,
+        PartnerProgramFieldInline,
+        PartnerProgramVerificationRequestInline,
+    ]
     form = PartnerProgramAdminForm
-    list_display = ("id", "name", "tag", "city", "status", "company", "datetime_created")
+    list_display = (
+        "id",
+        "name",
+        "tag",
+        "city",
+        "status",
+        "verification_status",
+        "company",
+        "datetime_created",
+    )
     list_display_links = (
         "id",
         "name",
@@ -98,7 +124,7 @@ class PartnerProgramAdmin(admin.ModelAdmin):
         "city",
         "tag",
     )
-    list_filter = ("city", "status", "company")
+    list_filter = ("city", "status", "verification_status", "company")
 
     autocomplete_fields = ("managers", "company")
     date_hierarchy = "datetime_started"
@@ -121,6 +147,7 @@ class PartnerProgramAdmin(admin.ModelAdmin):
                     "is_distributed_evaluation",
                     "draft",
                     "status",
+                    "verification_status",
                     "company",
                     (
                         "datetime_started",
@@ -377,3 +404,28 @@ class PartnerProgramFieldAdmin(admin.ModelAdmin):
     )
     list_filter = ("partner_program",)
     search_fields = ("name", "label", "help_text")
+
+
+@admin.register(PartnerProgramVerificationRequest)
+class PartnerProgramVerificationRequestAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "program",
+        "company",
+        "status",
+        "submitted_at",
+        "decided_at",
+    )
+    list_filter = ("status", "rejection_reason")
+    search_fields = (
+        "program__name",
+        "program__tag",
+        "company__name",
+        "company__inn",
+        "company_name",
+        "inn",
+        "contact_full_name",
+        "contact_email",
+    )
+    autocomplete_fields = ("program", "company", "initiator", "decided_by", "documents")
+    readonly_fields = ("submitted_at", "decided_at", "datetime_updated")

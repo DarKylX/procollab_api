@@ -16,8 +16,15 @@ from .programs import (
     ProgramProjectFilterRequestSerializer,
     UserProgramsSerializer,
 )
+from .verification import (
+    CompanyBriefSerializer,
+    PartnerProgramVerificationRequestSerializer,
+    PartnerProgramVerificationStatusSerializer,
+    PartnerProgramVerificationSubmitSerializer,
+)
 
 __all__ = [
+    "CompanyBriefSerializer",
     "LegalDocumentSerializer",
     "PartnerProgramBaseSerializerMixin",
     "PartnerProgramDataSchemaSerializer",
@@ -31,6 +38,9 @@ __all__ = [
     "PartnerProgramNewUserSerializer",
     "PartnerProgramProjectApplySerializer",
     "PartnerProgramUserSerializer",
+    "PartnerProgramVerificationRequestSerializer",
+    "PartnerProgramVerificationStatusSerializer",
+    "PartnerProgramVerificationSubmitSerializer",
     "ProgramProjectCreateSerializer",
     "ProgramProjectFilterRequestSerializer",
     "UserProgramsSerializer",
