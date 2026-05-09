@@ -129,6 +129,7 @@ class PartnerProgramListSerializer(serializers.ModelSerializer):
         fields = (
             "id",
             "status",
+            "frozen_at",
             "verification_status",
             "is_verified",
             "name",
@@ -147,6 +148,7 @@ class PartnerProgramListSerializer(serializers.ModelSerializer):
             "participation_format",
             "project_team_min_size",
             "project_team_max_size",
+            "readiness",
             "datetime_started",
             "datetime_finished",
             "views_count",
@@ -332,6 +334,7 @@ class PartnerProgramForMemberSerializer(PartnerProgramBaseSerializerMixin):
         fields = (
             "id",
             "status",
+            "frozen_at",
             "verification_status",
             "is_verified",
             "name",
@@ -360,6 +363,7 @@ class PartnerProgramForMemberSerializer(PartnerProgramBaseSerializerMixin):
             "participant_project",
             "participant_project_status",
             "participant_project_submitted_at",
+            "readiness",
             "is_user_manager",
             "courses",
         )
@@ -373,6 +377,7 @@ class PartnerProgramForUnregisteredUserSerializer(PartnerProgramBaseSerializerMi
         fields = (
             "id",
             "status",
+            "frozen_at",
             "verification_status",
             "is_verified",
             "name",
@@ -395,6 +400,7 @@ class PartnerProgramForUnregisteredUserSerializer(PartnerProgramBaseSerializerMi
             "participation_format",
             "project_team_min_size",
             "project_team_max_size",
+            "readiness",
             "is_user_manager",
             "courses",
         )

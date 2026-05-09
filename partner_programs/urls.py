@@ -18,11 +18,14 @@ from partner_programs.views import (
     PartnerProgramProjectApplyView,
     PartnerProgramProjectsAPIView,
     PartnerProgramProjectSubmitView,
+    PartnerProgramReadinessView,
     PartnerProgramRegister,
     PartnerProgramSetLiked,
     PartnerProgramSetViewed,
+    PartnerProgramSubmitToModerationView,
     PartnerProgramVerificationStatusView,
     PartnerProgramVerificationSubmitView,
+    PartnerProgramWithdrawFromModerationView,
     ProgramFiltersAPIView,
     ProgramProjectFilterAPIView,
 )
@@ -43,6 +46,21 @@ urlpatterns = [
         name="partner-program-project-submit",
     ),
     path("<int:pk>/schema/", PartnerProgramDataSchema.as_view()),
+    path(
+        "<int:pk>/readiness/",
+        PartnerProgramReadinessView.as_view(),
+        name="partner-program-readiness",
+    ),
+    path(
+        "<int:pk>/submit-to-moderation/",
+        PartnerProgramSubmitToModerationView.as_view(),
+        name="partner-program-submit-to-moderation",
+    ),
+    path(
+        "<int:pk>/withdraw-from-moderation/",
+        PartnerProgramWithdrawFromModerationView.as_view(),
+        name="partner-program-withdraw-from-moderation",
+    ),
     path("<int:pk>/register/", PartnerProgramRegister.as_view()),
     path("<int:pk>/register_new/", PartnerProgramCreateUserAndRegister.as_view()),
     path(

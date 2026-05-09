@@ -3,12 +3,45 @@ from django.db import models
 
 
 class ModerationLog(models.Model):
+    ACTION_SUBMIT_TO_MODERATION = "submit_to_moderation"
+    ACTION_SUBMITTED_LEGACY = "submitted"
+    ACTION_SUBMITTED = ACTION_SUBMIT_TO_MODERATION
+    ACTION_APPROVE = "approve"
+    ACTION_APPROVED_LEGACY = "approved"
+    ACTION_APPROVED = ACTION_APPROVE
+    ACTION_REJECT = "reject"
+    ACTION_REJECTED_LEGACY = "rejected"
+    ACTION_REJECTED = ACTION_REJECT
+    ACTION_WITHDRAW = "withdraw"
+    ACTION_WITHDRAWN_LEGACY = "withdrawn"
+    ACTION_WITHDRAWN = ACTION_WITHDRAW
+    ACTION_AUTO_FREEZE = "auto_freeze"
+    ACTION_FREEZE = "freeze"
+    ACTION_RESTORE = "restore"
+    ACTION_ARCHIVE = "archive"
+    ACTION_COMPLETE = "complete"
     ACTION_VERIFICATION_SUBMITTED = "verification_submitted"
     ACTION_VERIFICATION_APPROVE = "verification_approve"
     ACTION_VERIFICATION_REJECT = "verification_reject"
     ACTION_VERIFICATION_REVOKE = "verification_revoke"
 
+    SUBMISSION_ACTIONS = (ACTION_SUBMIT_TO_MODERATION, ACTION_SUBMITTED_LEGACY)
+    REJECT_ACTIONS = (ACTION_REJECT, ACTION_REJECTED_LEGACY)
+
     ACTION_CHOICES = [
+        (ACTION_SUBMIT_TO_MODERATION, "Submit to moderation"),
+        (ACTION_SUBMITTED_LEGACY, "Submit to moderation"),
+        (ACTION_APPROVE, "Approve"),
+        (ACTION_APPROVED_LEGACY, "Approve"),
+        (ACTION_REJECT, "Reject"),
+        (ACTION_REJECTED_LEGACY, "Reject"),
+        (ACTION_WITHDRAW, "Withdraw"),
+        (ACTION_WITHDRAWN_LEGACY, "Withdraw"),
+        (ACTION_AUTO_FREEZE, "Automatic freeze"),
+        (ACTION_FREEZE, "Manual freeze"),
+        (ACTION_RESTORE, "Restore"),
+        (ACTION_ARCHIVE, "Archive"),
+        (ACTION_COMPLETE, "Complete"),
         (ACTION_VERIFICATION_SUBMITTED, "Verification submitted"),
         (ACTION_VERIFICATION_APPROVE, "Verification approve"),
         (ACTION_VERIFICATION_REJECT, "Verification reject"),
@@ -36,6 +69,7 @@ class ModerationLog(models.Model):
     status_after = models.CharField(max_length=20, blank=True)
     comment = models.TextField(blank=True)
     rejection_reason = models.CharField(max_length=40, blank=True)
+    sections_to_fix = models.JSONField(default=list, blank=True)
     datetime_created = models.DateTimeField(auto_now_add=True, db_index=True)
 
     class Meta:
