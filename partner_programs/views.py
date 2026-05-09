@@ -196,7 +196,8 @@ class PartnerProgramProjectApplyView(GenericAPIView):
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
 
-        project_data = data["project"]
+        project_data = data.get("project")
+        project_id = data.get("project_id")
         values_data = data.get("program_field_values") or []
 
         seen_field_ids: set[int] = set()
@@ -224,15 +225,34 @@ class PartnerProgramProjectApplyView(GenericAPIView):
             )
 
         with transaction.atomic():
-            project = Project.objects.create(
-                leader=request.user,
-                draft=True,
-                is_public=False,
-                **project_data,
-            )
-            program_link = PartnerProgramProject.objects.create(
-                partner_program=program, project=project
-            )
+            if project_id is not None:
+                project = get_object_or_404(Project, pk=project_id)
+                if project.leader_id != request.user.id:
+                    raise PermissionDenied("Only project leader can link project to program.")
+
+                existing_program_link = (
+                    project.program_links.select_related("partner_program")
+                    .exclude(partner_program=program)
+                    .first()
+                )
+                if existing_program_link:
+                    raise ValidationError(
+                        {"project_id": "Project is already linked to another program."}
+                    )
+
+                program_link, _ = PartnerProgramProject.objects.get_or_create(
+                    partner_program=program, project=project
+                )
+            else:
+                project = Project.objects.create(
+                    leader=request.user,
+                    draft=True,
+                    is_public=False,
+                    **project_data,
+                )
+                program_link = PartnerProgramProject.objects.create(
+                    partner_program=program, project=project
+                )
 
             profile = PartnerProgramUserProfile.objects.filter(
                 user=request.user, partner_program=program
