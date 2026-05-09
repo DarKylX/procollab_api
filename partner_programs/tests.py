@@ -743,3 +743,112 @@ class PartnerProgramDetailCoursesTests(TestCase):
                 },
             ],
         )
+
+
+class PartnerProgramDetailParticipantProjectTests(TestCase):
+    def setUp(self):
+        self.factory = APIRequestFactory()
+        self.view = PartnerProgramDetail.as_view()
+        self.now = timezone.now()
+
+    def create_user(self, email: str):
+        return get_user_model().objects.create_user(
+            email=email,
+            password="pass",
+            first_name="Test",
+            last_name="User",
+            birthday="1990-01-01",
+        )
+
+    def create_program(self, **overrides):
+        defaults = {
+            "name": "Program with participant project",
+            "tag": f"participant_project_{PartnerProgram.objects.count()}",
+            "description": "Program description",
+            "city": "Moscow",
+            "data_schema": {},
+            "draft": False,
+            "projects_availability": "all_users",
+            "datetime_registration_ends": self.now + timezone.timedelta(days=10),
+            "datetime_started": self.now - timezone.timedelta(days=1),
+            "datetime_finished": self.now + timezone.timedelta(days=30),
+        }
+        defaults.update(overrides)
+        return PartnerProgram.objects.create(**defaults)
+
+    def create_project(self, user, **overrides):
+        defaults = {
+            "leader": user,
+            "draft": True,
+            "is_public": False,
+            "name": "Participant project",
+            "description": "Project description",
+            "presentation_address": "https://example.com/presentation.pdf",
+        }
+        defaults.update(overrides)
+        return Project.objects.create(**defaults)
+
+    def test_detail_includes_current_member_project_state(self):
+        user = self.create_user("member-project@example.com")
+        program = self.create_program()
+        project = self.create_project(user)
+        link = PartnerProgramProject.objects.create(
+            partner_program=program,
+            project=project,
+        )
+        PartnerProgramUserProfile.objects.create(
+            user=user,
+            partner_program=program,
+            project=project,
+            partner_program_data={},
+        )
+
+        request = self.factory.get(f"/programs/{program.id}/")
+        force_authenticate(request, user=user)
+        response = self.view(request, pk=program.id)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["program_link_id"], link.id)
+        self.assertEqual(response.data["participant_project_status"], "not_submitted")
+        self.assertIsNone(response.data["participant_project_submitted_at"])
+        self.assertEqual(response.data["participant_project"]["id"], project.id)
+        self.assertEqual(
+            response.data["participant_project"]["partner_program"]["program_link_id"],
+            link.id,
+        )
+        self.assertFalse(
+            response.data["participant_project"]["partner_program"]["submitted"]
+        )
+
+    def test_detail_includes_submitted_project_state(self):
+        user = self.create_user("submitted-project@example.com")
+        program = self.create_program()
+        project = self.create_project(user)
+        submitted_at = timezone.now()
+        link = PartnerProgramProject.objects.create(
+            partner_program=program,
+            project=project,
+            submitted=True,
+            datetime_submitted=submitted_at,
+        )
+        PartnerProgramUserProfile.objects.create(
+            user=user,
+            partner_program=program,
+            project=project,
+            partner_program_data={},
+        )
+
+        request = self.factory.get(f"/programs/{program.id}/")
+        force_authenticate(request, user=user)
+        response = self.view(request, pk=program.id)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["program_link_id"], link.id)
+        self.assertEqual(response.data["participant_project_status"], "submitted")
+        self.assertEqual(
+            response.data["participant_project_submitted_at"],
+            submitted_at.isoformat(),
+        )
+        self.assertTrue(
+            response.data["participant_project"]["partner_program"]["submitted"]
+        )
