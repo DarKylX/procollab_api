@@ -1,5 +1,6 @@
 from .fields import PartnerProgramFieldValueUpdateSerializer
 from .programs import (
+    LegalDocumentSerializer,
     PartnerProgramBaseSerializerMixin,
     PartnerProgramDataSchemaSerializer,
     PartnerProgramFieldSerializer,
@@ -17,6 +18,7 @@ from .programs import (
 )
 
 __all__ = [
+    "LegalDocumentSerializer",
     "PartnerProgramBaseSerializerMixin",
     "PartnerProgramDataSchemaSerializer",
     "PartnerProgramFieldSerializer",

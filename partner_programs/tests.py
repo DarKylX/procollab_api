@@ -2,23 +2,177 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIRequestFactory, force_authenticate
+from unittest.mock import patch
 
 from courses.models import Course, CourseAccessType, CourseContentStatus
 from partner_programs.models import (
+    LegalDocument,
     PartnerProgram,
     PartnerProgramField,
+    PartnerProgramParticipantConsent,
     PartnerProgramProject,
     PartnerProgramUserProfile,
 )
 from partner_programs.serializers import PartnerProgramFieldValueUpdateSerializer
 from partner_programs.services import publish_finished_program_projects
 from partner_programs.views import (
+    ActiveLegalDocumentsView,
     PartnerProgramDetail,
     PartnerProgramList,
     PartnerProgramProjectApplyView,
+    PartnerProgramRegister,
     PartnerProgramProjectSubmitView,
 )
 from projects.models import Company, Project
+
+
+class PartnerProgramPrivacyLegalTests(TestCase):
+    def setUp(self):
+        self.factory = APIRequestFactory()
+        self.now = timezone.now()
+        self.user = get_user_model().objects.create_user(
+            email="participant@example.com",
+            password="pass",
+            first_name="Participant",
+            last_name="Test",
+            birthday="1990-01-01",
+        )
+        self.program = PartnerProgram.objects.create(
+            name="Privacy Program",
+            tag="privacy_program",
+            description="Program description",
+            city="Moscow",
+            image_address="https://example.com/image.png",
+            cover_image_address="https://example.com/cover.png",
+            advertisement_image_address="https://example.com/advertisement.png",
+            presentation_address="https://example.com/presentation.pdf",
+            data_schema={},
+            draft=False,
+            status=PartnerProgram.STATUS_PUBLISHED,
+            projects_availability="all_users",
+            datetime_registration_ends=self.now + timezone.timedelta(days=30),
+            datetime_started=self.now,
+            datetime_finished=self.now + timezone.timedelta(days=60),
+        )
+        self.ensure_legal_documents()
+
+    def ensure_legal_documents(self):
+        documents = (
+            ("privacy_policy", "Privacy policy"),
+            ("participant_consent", "Participant consent"),
+            ("participation_terms", "Participation terms"),
+        )
+        for doc_type, title in documents:
+            LegalDocument.objects.update_or_create(
+                type=doc_type,
+                version="test",
+                defaults={
+                    "title": title,
+                    "content_html": f"{title} text",
+                    "is_active": True,
+                },
+            )
+
+    def test_active_legal_documents_returns_latest_active_per_type(self):
+        LegalDocument.objects.create(
+            type="privacy_policy",
+            title="Old privacy policy",
+            version="old",
+            content_html="old",
+            is_active=True,
+        )
+        latest = LegalDocument.objects.create(
+            type="privacy_policy",
+            title="Latest privacy policy",
+            version="latest",
+            content_html="latest",
+            is_active=True,
+        )
+
+        request = self.factory.get("/programs/legal-documents/active/")
+        response = ActiveLegalDocumentsView.as_view()(request)
+
+        self.assertEqual(response.status_code, 200)
+        docs_by_type = {item["type"]: item for item in response.data}
+        self.assertEqual(docs_by_type["privacy_policy"]["id"], latest.id)
+        self.assertIn("participant_consent", docs_by_type)
+        self.assertIn("participation_terms", docs_by_type)
+
+    def test_register_requires_personal_data_consent(self):
+        request = self.factory.post(
+            f"/programs/{self.program.id}/register/",
+            {"education": "University"},
+            format="json",
+        )
+        force_authenticate(request, user=self.user)
+
+        response = PartnerProgramRegister.as_view()(request, pk=self.program.pk)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("personal_data_consent", response.data)
+        self.assertFalse(
+            PartnerProgramUserProfile.objects.filter(
+                partner_program=self.program,
+                user=self.user,
+            ).exists()
+        )
+        self.assertFalse(
+            PartnerProgramParticipantConsent.objects.filter(
+                program=self.program,
+                user=self.user,
+            ).exists()
+        )
+
+    @patch("partner_programs.views.send_email.delay")
+    def test_register_creates_consent_and_strips_consent_payload(self, send_email_delay):
+        request = self.factory.post(
+            f"/programs/{self.program.id}/register/",
+            {
+                "education": "University",
+                "personalDataConsent": True,
+            },
+            format="json",
+            HTTP_USER_AGENT="test-agent",
+            REMOTE_ADDR="127.0.0.1",
+        )
+        force_authenticate(request, user=self.user)
+
+        response = PartnerProgramRegister.as_view()(request, pk=self.program.pk)
+
+        self.assertEqual(response.status_code, 201)
+        profile = PartnerProgramUserProfile.objects.get(
+            partner_program=self.program,
+            user=self.user,
+        )
+        self.assertEqual(profile.partner_program_data, {"education": "University"})
+        consent = PartnerProgramParticipantConsent.objects.get(
+            program=self.program,
+            user=self.user,
+        )
+        self.assertEqual(consent.consent_document_version, "test")
+        self.assertEqual(consent.privacy_policy_version, "test")
+        self.assertEqual(consent.participation_terms_version, "test")
+        self.assertEqual(consent.ip_address, "127.0.0.1")
+        self.assertEqual(consent.user_agent, "test-agent")
+        send_email_delay.assert_called_once()
+
+    def test_register_fails_when_required_legal_document_missing(self):
+        LegalDocument.objects.filter(type="privacy_policy").update(is_active=False)
+        request = self.factory.post(
+            f"/programs/{self.program.id}/register/",
+            {
+                "education": "University",
+                "personalDataConsent": True,
+            },
+            format="json",
+        )
+        force_authenticate(request, user=self.user)
+
+        response = PartnerProgramRegister.as_view()(request, pk=self.program.pk)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("missing_legal_documents", response.data)
+        self.assertIn("privacy_policy", response.data["missing_legal_documents"])
 
 
 class PartnerProgramFieldValueUpdateSerializerInvalidTests(TestCase):

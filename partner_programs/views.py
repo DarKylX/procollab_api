@@ -37,6 +37,7 @@ from partner_programs.permissions import (
     IsProjectLeader,
 )
 from partner_programs.serializers import (
+    LegalDocumentSerializer,
     PartnerProgramDataSchemaSerializer,
     PartnerProgramFieldSerializer,
     PartnerProgramForMemberSerializer,
@@ -46,6 +47,11 @@ from partner_programs.serializers import (
     PartnerProgramProjectApplySerializer,
     PartnerProgramUserSerializer,
     ProgramProjectFilterRequestSerializer,
+)
+from partner_programs.privacy import (
+    active_legal_documents_by_type,
+    create_participant_consent,
+    strip_registration_consent_keys,
 )
 from partner_programs.services import (
     BASE_COLUMNS,
@@ -62,6 +68,14 @@ from vacancy.mapping import MessageTypeEnum, UserProgramRegisterParams
 from vacancy.tasks import send_email
 
 User = get_user_model()
+
+
+class ActiveLegalDocumentsView(generics.ListAPIView):
+    serializer_class = LegalDocumentSerializer
+    permission_classes = [AllowAny]
+
+    def get_queryset(self):
+        return list(active_legal_documents_by_type().values())
 
 
 class PartnerProgramList(generics.ListCreateAPIView):
@@ -332,29 +346,35 @@ class PartnerProgramCreateUserAndRegister(generics.GenericAPIView):
             "patronymic",
             "city",
         )
-        user, created = User.objects.get_or_create(
-            email=email,
-            defaults={
-                "birthday": date_to_iso(data.get("birthday", "01-01-1900")),
-                "is_active": True,  # bypass email verification
-                "onboarding_stage": None,  # bypass onboarding
-                "verification_date": timezone.now(),  # bypass manual verification
-                **{field_name: data.get(field_name, "") for field_name in user_fields},
-            },
-        )
-        if created:  # Only when registering a new user.
-            user.set_password(password)
-            user.save()
-
-        user_profile_program_data = {
-            k: v for k, v in data.items() if k not in user_fields and k != "password"
-        }
         try:
-            PartnerProgramUserProfile.objects.create(
-                partner_program_data=user_profile_program_data,
-                user=user,
-                partner_program=program,
-            )
+            with transaction.atomic():
+                user, created = User.objects.get_or_create(
+                    email=email,
+                    defaults={
+                        "birthday": date_to_iso(data.get("birthday", "01-01-1900")),
+                        "is_active": True,  # bypass email verification
+                        "onboarding_stage": None,  # bypass onboarding
+                        "verification_date": timezone.now(),  # bypass manual verification
+                        **{field_name: data.get(field_name, "") for field_name in user_fields},
+                    },
+                )
+                if created:  # Only when registering a new user.
+                    user.set_password(password)
+                    user.save()
+
+                user_profile_program_data = {
+                    k: v for k, v in data.items() if k not in user_fields and k != "password"
+                }
+                user_profile_program_data = strip_registration_consent_keys(
+                    user_profile_program_data
+                )
+
+                create_participant_consent(program=program, user=user, request=request)
+                PartnerProgramUserProfile.objects.create(
+                    partner_program_data=user_profile_program_data,
+                    user=user,
+                    partner_program=program,
+                )
         except IntegrityError:
             return Response(
                 data={"detail": "User has already registered in this program."},
@@ -394,14 +414,22 @@ class PartnerProgramRegister(generics.GenericAPIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             user_to_add = request.user
-            user_profile_program_data = request.data
-
-            added_user_profile = PartnerProgramUserProfile(
-                partner_program_data=user_profile_program_data,
-                user=user_to_add,
-                partner_program=program,
+            user_profile_program_data = strip_registration_consent_keys(
+                dict(request.data.items())
             )
-            added_user_profile.save()
+
+            with transaction.atomic():
+                create_participant_consent(
+                    program=program,
+                    user=user_to_add,
+                    request=request,
+                )
+                added_user_profile = PartnerProgramUserProfile(
+                    partner_program_data=user_profile_program_data,
+                    user=user_to_add,
+                    partner_program=program,
+                )
+                added_user_profile.save()
 
             send_email.delay(
                 UserProgramRegisterParams(
