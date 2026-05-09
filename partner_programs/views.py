@@ -38,6 +38,7 @@ from partner_programs.models import (
     PartnerProgramField,
     PartnerProgramFieldValue,
     PartnerProgramInvite,
+    PartnerProgramLegalSettings,
     PartnerProgramProject,
     PartnerProgramUserProfile,
 )
@@ -55,6 +56,7 @@ from partner_programs.serializers import (
     PartnerProgramForUnregisteredUserSerializer,
     PartnerProgramInviteCreateSerializer,
     PartnerProgramInviteSerializer,
+    PartnerProgramLegalSettingsSerializer,
     PartnerProgramListSerializer,
     PartnerProgramNewUserSerializer,
     PartnerProgramProjectApplySerializer,
@@ -65,8 +67,11 @@ from partner_programs.serializers import (
     PublicPartnerProgramInviteSerializer,
 )
 from partner_programs.privacy import (
+    accept_organizer_terms,
     active_legal_documents_by_type,
+    can_view_participant_contacts,
     create_participant_consent,
+    log_personal_data_access,
     strip_registration_consent_keys,
 )
 from partner_programs.services import (
@@ -473,6 +478,46 @@ class PartnerProgramReadinessView(APIView):
             getattr(user, "is_staff", False)
             or getattr(user, "is_superuser", False)
             or program.is_manager(user)
+        )
+
+
+class PartnerProgramLegalSettingsView(APIView):
+    permission_classes = [IsAuthenticated, IsAdminOrManagerOfProgram]
+
+    def get(self, request, pk):
+        program = get_object_or_404(PartnerProgram, pk=pk)
+        settings_obj, _ = PartnerProgramLegalSettings.objects.get_or_create(
+            program=program
+        )
+        return Response(
+            PartnerProgramLegalSettingsSerializer(settings_obj).data,
+            status=status.HTTP_200_OK,
+        )
+
+    def patch(self, request, pk):
+        program = get_object_or_404(PartnerProgram, pk=pk)
+        settings_obj, _ = PartnerProgramLegalSettings.objects.get_or_create(
+            program=program
+        )
+        serializer = PartnerProgramLegalSettingsSerializer(
+            settings_obj,
+            data=request.data,
+            partial=True,
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class PartnerProgramAcceptOrganizerTermsView(APIView):
+    permission_classes = [IsAuthenticated, IsAdminOrManagerOfProgram]
+
+    def post(self, request, pk):
+        program = get_object_or_404(PartnerProgram, pk=pk)
+        settings_obj = accept_organizer_terms(program=program, user=request.user)
+        return Response(
+            PartnerProgramLegalSettingsSerializer(settings_obj).data,
+            status=status.HTTP_200_OK,
         )
 
 
@@ -1156,7 +1201,23 @@ class PartnerProgramAnalyticsAPIView(APIView):
 
     def get(self, request, pk: int):
         program = get_object_or_404(PartnerProgram, pk=pk)
+        contacts_visible = can_view_participant_contacts(request.user, program)
+        log_personal_data_access(
+            actor=request.user,
+            program=program,
+            action="participant_list_view",
+            object_type="analytics",
+            object_id=program.id,
+            metadata={
+                "count": PartnerProgramUserProfile.objects.filter(
+                    partner_program=program
+                ).count(),
+                "masked": not contacts_visible,
+                "request_path": request.path,
+            },
+        )
         payload = build_program_analytics_payload(program)
+        payload["can_export_contacts"] = contacts_visible
         payload["verification_status"] = program.verification_status
         return Response(payload, status=status.HTTP_200_OK)
 
@@ -1167,8 +1228,61 @@ class PartnerProgramAnalyticsExportAPIView(APIView):
     def get(self, request, pk: int):
         program = get_object_or_404(PartnerProgram, pk=pk)
         binary_data = build_program_analytics_xlsx(program, include_contacts=False)
+        log_personal_data_access(
+            actor=request.user,
+            program=program,
+            action="participant_export_download",
+            object_type="xlsx",
+            object_id=program.id,
+            metadata={
+                "count": PartnerProgramUserProfile.objects.filter(
+                    partner_program=program
+                ).count(),
+                "export_type": "analytics_basic",
+                "field_names": ["participant_id", "full_name", "project", "role"],
+                "masked": True,
+                "request_path": request.path,
+            },
+        )
         date_suffix = timezone.now().strftime("%d.%m.%y")
         base_name = f"analytics - {program.name or 'program'} - {date_suffix}"
+        return build_xlsx_download_response(binary_data, base_name=base_name)
+
+
+class PartnerProgramAnalyticsContactExportAPIView(APIView):
+    permission_classes = [IsAdminOrManagerOfProgram]
+
+    def get(self, request, pk: int):
+        program = get_object_or_404(PartnerProgram, pk=pk)
+        if not can_view_participant_contacts(request.user, program):
+            return Response(
+                {
+                    "detail": "Contact export is available only after company verification.",
+                    "verification_status": program.verification_status,
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        binary_data = build_program_analytics_xlsx(program, include_contacts=True)
+        row_count = PartnerProgramUserProfile.objects.filter(
+            partner_program=program
+        ).count()
+        log_personal_data_access(
+            actor=request.user,
+            program=program,
+            action="participant_export_download",
+            object_type="xlsx",
+            object_id=program.id,
+            metadata={
+                "count": row_count,
+                "export_type": "analytics_contacts",
+                "field_names": ["email", "phone_number"],
+                "masked": False,
+                "request_path": request.path,
+            },
+        )
+        date_suffix = timezone.now().strftime("%d.%m.%y")
+        base_name = f"contacts - {program.name or 'program'} - {date_suffix}"
         return build_xlsx_download_response(binary_data, base_name=base_name)
 
 

@@ -1,3 +1,4 @@
+import re
 from typing import Any
 
 from rest_framework.exceptions import ValidationError
@@ -18,6 +19,91 @@ REGISTRATION_REQUIRED_DOCUMENT_TYPES = (
     "participation_terms",
 )
 
+MODERATION_REQUIRED_DOCUMENT_TYPES = (
+    "privacy_policy",
+    "participant_consent",
+    "participation_terms",
+    "organizer_terms",
+)
+
+
+def mask_email(email: str | None) -> str:
+    if not email:
+        return ""
+    local, separator, domain = str(email).partition("@")
+    if not separator:
+        return "***"
+    masked_local = f"{local[:2]}***" if len(local) > 2 else f"{local[:1]}***"
+    return f"{masked_local}@{domain}"
+
+
+def mask_phone(phone: str | int | None) -> str:
+    digits = re.sub(r"\D", "", str(phone or ""))
+    if not digits:
+        return ""
+    prefix = "+7" if digits.startswith(("7", "8")) or len(digits) == 10 else "+"
+    return f"{prefix} *** ***-**-{digits[-2:]}"
+
+
+def can_view_participant_contacts(actor, program) -> bool:
+    if not actor or not getattr(actor, "is_authenticated", False):
+        return False
+    if getattr(actor, "is_staff", False) or getattr(actor, "is_superuser", False):
+        return True
+    return bool(
+        program.verification_status == "verified"
+        and program.is_manager(actor)
+    )
+
+
+def sanitize_audit_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
+    if not metadata:
+        return {}
+
+    forbidden_keys = {
+        "email",
+        "phone",
+        "phone_number",
+        "answers",
+        "plain_answers",
+        "partner_program_data",
+    }
+    clean: dict[str, Any] = {}
+    for key, value in metadata.items():
+        if str(key).casefold() in forbidden_keys:
+            continue
+        if isinstance(value, dict):
+            clean[key] = sanitize_audit_metadata(value)
+        elif isinstance(value, list):
+            clean[key] = [
+                sanitize_audit_metadata(item) if isinstance(item, dict) else item
+                for item in value
+            ]
+        else:
+            clean[key] = value
+    return clean
+
+
+def log_personal_data_access(
+    *,
+    actor,
+    program,
+    action: str,
+    object_type: str = "",
+    object_id: str = "",
+    metadata: dict[str, Any] | None = None,
+):
+    from partner_programs.models import PersonalDataAccessLog
+
+    return PersonalDataAccessLog.objects.create(
+        actor=actor if getattr(actor, "is_authenticated", False) else None,
+        program=program,
+        action=action,
+        object_type=object_type or "",
+        object_id=str(object_id or ""),
+        metadata=sanitize_audit_metadata(metadata),
+    )
+
 
 def active_legal_documents_by_type() -> dict[str, Any]:
     from partner_programs.models import LegalDocument
@@ -37,6 +123,86 @@ def document_snapshot(document) -> str:
     if document.content_html:
         return document.content_html
     return document.content_url or ""
+
+
+def get_or_create_program_legal_settings(program):
+    from partner_programs.models import PartnerProgramLegalSettings
+
+    settings, _ = PartnerProgramLegalSettings.objects.get_or_create(program=program)
+    return settings
+
+
+def program_legal_settings_snapshot(program) -> dict[str, Any]:
+    try:
+        settings = program.legal_settings
+    except Exception:
+        settings = None
+    if not settings:
+        return {}
+    return {
+        "participation_rules_link": settings.participation_rules_link or "",
+        "participation_rules_file": settings.participation_rules_file_id or "",
+        "additional_terms_text": settings.additional_terms_text or "",
+        "version": settings.terms_version,
+    }
+
+
+def build_participation_terms_snapshot(program, active_docs: dict[str, Any]) -> dict[str, str]:
+    settings_snapshot = program_legal_settings_snapshot(program)
+    if any(
+        settings_snapshot.get(key)
+        for key in (
+            "participation_rules_link",
+            "participation_rules_file",
+            "additional_terms_text",
+        )
+    ):
+        return {
+            "version": settings_snapshot["version"],
+            "snapshot": "\n".join(
+                part
+                for part in (
+                    f"rules_link={settings_snapshot.get('participation_rules_link', '')}",
+                    f"rules_file={settings_snapshot.get('participation_rules_file', '')}",
+                    settings_snapshot.get("additional_terms_text", ""),
+                )
+                if part
+            ),
+        }
+
+    doc = active_docs.get("participation_terms")
+    return {
+        "version": getattr(doc, "version", ""),
+        "snapshot": document_snapshot(doc),
+    }
+
+
+def accept_organizer_terms(*, program, user):
+    active_docs = active_legal_documents_by_type()
+    organizer_terms = active_docs.get("organizer_terms")
+    if not organizer_terms:
+        raise ValidationError(
+            {
+                "detail": "Organizer terms document is not active.",
+                "missing_legal_documents": ["organizer_terms"],
+            }
+        )
+
+    settings = get_or_create_program_legal_settings(program)
+    from django.utils import timezone
+
+    settings.organizer_terms_accepted_by = user
+    settings.organizer_terms_accepted_at = timezone.now()
+    settings.organizer_terms_version = organizer_terms.version
+    settings.save(
+        update_fields=(
+            "organizer_terms_accepted_by",
+            "organizer_terms_accepted_at",
+            "organizer_terms_version",
+            "updated_at",
+        )
+    )
+    return settings
 
 
 def request_has_registration_consent(data: dict[str, Any]) -> bool:
@@ -76,20 +242,20 @@ def create_participant_consent(*, program, user, request) -> None:
 
     privacy_doc = active_docs["privacy_policy"]
     consent_doc = active_docs["participant_consent"]
-    terms_doc = active_docs["participation_terms"]
+    participation_snapshot = build_participation_terms_snapshot(program, active_docs)
 
     PartnerProgramParticipantConsent.objects.create(
         program=program,
         user=user if getattr(user, "is_authenticated", False) else None,
         consent_document_version=consent_doc.version,
         privacy_policy_version=privacy_doc.version,
-        participation_terms_version=terms_doc.version,
+        participation_terms_version=participation_snapshot["version"],
         consent_text_snapshot="\n\n".join(
             part
             for part in (
                 document_snapshot(consent_doc),
                 document_snapshot(privacy_doc),
-                document_snapshot(terms_doc),
+                participation_snapshot["snapshot"],
             )
             if part
         ),
