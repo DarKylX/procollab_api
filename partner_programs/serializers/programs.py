@@ -18,9 +18,21 @@ from .fields import PartnerProgramFieldValueUpdateSerializer
 User = get_user_model()
 
 
+def _company_summary(company):
+    if not company:
+        return None
+    return {
+        "id": company.id,
+        "name": company.name,
+        "inn": company.inn,
+    }
+
+
 class PartnerProgramListSerializer(serializers.ModelSerializer):
     """Serializer for PartnerProgram model for list view."""
 
+    company = serializers.SerializerMethodField()
+    company_name = serializers.SerializerMethodField()
     likes_count = serializers.SerializerMethodField(method_name="count_likes")
     views_count = serializers.SerializerMethodField(method_name="count_views")
     short_description = serializers.SerializerMethodField(
@@ -64,13 +76,23 @@ class PartnerProgramListSerializer(serializers.ModelSerializer):
             return False
         return program.users.filter(pk=user.pk).exists()
 
+    def get_company(self, program):
+        return _company_summary(program.company)
+
+    def get_company_name(self, program):
+        return program.company.name if program.company_id and program.company else ""
+
     class Meta:
         model = PartnerProgram
         fields = (
             "id",
+            "status",
             "name",
+            "city",
             "image_address",
             "short_description",
+            "company",
+            "company_name",
             "registration_link",
             "datetime_registration_ends",
             "datetime_project_submission_ends",
@@ -94,6 +116,8 @@ class PartnerProgramBaseSerializerMixin(serializers.ModelSerializer):
     materials = serializers.SerializerMethodField()
     is_user_manager = serializers.SerializerMethodField()
     courses = serializers.SerializerMethodField()
+    company = serializers.SerializerMethodField()
+    company_name = serializers.SerializerMethodField()
 
     def get_materials(self, program: PartnerProgram):
         materials = program.materials.all()
@@ -133,6 +157,12 @@ class PartnerProgramBaseSerializerMixin(serializers.ModelSerializer):
             for course in related_courses
         ]
 
+    def get_company(self, program: PartnerProgram):
+        return _company_summary(program.company)
+
+    def get_company_name(self, program: PartnerProgram) -> str:
+        return program.company.name if program.company_id and program.company else ""
+
     class Meta:
         abstract = True
 
@@ -163,10 +193,13 @@ class PartnerProgramForMemberSerializer(PartnerProgramBaseSerializerMixin):
         model = PartnerProgram
         fields = (
             "id",
+            "status",
             "name",
             "tag",
             "description",
             "city",
+            "company",
+            "company_name",
             "links",
             "materials",
             "image_address",
@@ -190,9 +223,12 @@ class PartnerProgramForUnregisteredUserSerializer(PartnerProgramBaseSerializerMi
         model = PartnerProgram
         fields = (
             "id",
+            "status",
             "name",
             "tag",
             "city",
+            "company",
+            "company_name",
             "materials",
             "image_address",
             "cover_image_address",

@@ -4,7 +4,7 @@ from django.contrib import admin
 from django.forms import ModelForm, FileField
 from django.db.models import QuerySet
 
-from files.service import CDN, SelectelSwiftStorage
+from files.service import CDN, get_default_storage
 from files.models import UserFile
 
 
@@ -43,7 +43,7 @@ class UserFileAdmin(admin.ModelAdmin):
     date_hierarchy = "datetime_uploaded"
     ordering = ("-datetime_uploaded",)
 
-    cdn = CDN(storage=SelectelSwiftStorage())
+    cdn = CDN(storage=get_default_storage())
 
     @admin.display(empty_value="Empty filename")
     def filename(self, obj):

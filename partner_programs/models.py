@@ -34,6 +34,16 @@ class PartnerProgram(models.Model):
         ("all_users", "Всем пользователям"),
         ("experts_only", "Только экспертам"),
     ]
+    STATUS_DRAFT = "draft"
+    STATUS_PUBLISHED = "published"
+    STATUS_COMPLETED = "completed"
+    STATUS_ARCHIVED = "archived"
+    STATUS_CHOICES = [
+        (STATUS_DRAFT, "Draft"),
+        (STATUS_PUBLISHED, "Published"),
+        (STATUS_COMPLETED, "Completed"),
+        (STATUS_ARCHIVED, "Archived"),
+    ]
 
     name = models.TextField(
         verbose_name="Название",
@@ -113,7 +123,27 @@ class PartnerProgram(models.Model):
         verbose_name="Менеджеры программы",
         help_text="Пользователи, имеющие право создавать и редактировать новости",
     )
-    draft = models.BooleanField(blank=False, default=True)
+    draft = models.BooleanField(
+        blank=False,
+        default=True,
+        verbose_name="[DEPRECATED] Draft",
+        help_text="Legacy flag kept for backward compatibility; use status instead.",
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default=STATUS_DRAFT,
+        db_index=True,
+        verbose_name="Program status",
+    )
+    company = models.ForeignKey(
+        "projects.Company",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="programs",
+        verbose_name="Organizer company",
+    )
     projects_availability = models.CharField(
         choices=PROJECTS_AVAILABILITY_CHOISES,
         max_length=25,
@@ -159,6 +189,11 @@ class PartnerProgram(models.Model):
         if not user or not user.is_authenticated:
             return False
         return self.managers.filter(pk=user.pk).exists()
+
+    @property
+    def is_published(self) -> bool:
+        """Return true when the program should be visible on the public catalog."""
+        return self.status == self.STATUS_PUBLISHED
 
     class Meta:
         verbose_name = "Программа"
