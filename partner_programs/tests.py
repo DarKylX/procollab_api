@@ -12,8 +12,12 @@ from partner_programs.models import (
 )
 from partner_programs.serializers import PartnerProgramFieldValueUpdateSerializer
 from partner_programs.services import publish_finished_program_projects
-from partner_programs.views import PartnerProgramDetail, PartnerProgramProjectSubmitView
-from projects.models import Project
+from partner_programs.views import (
+    PartnerProgramDetail,
+    PartnerProgramList,
+    PartnerProgramProjectSubmitView,
+)
+from projects.models import Company, Project
 
 
 class PartnerProgramFieldValueUpdateSerializerInvalidTests(TestCase):
@@ -238,6 +242,61 @@ class PublishFinishedProgramProjectsTests(TestCase):
         publish_finished_program_projects()
         project.refresh_from_db()
         self.assertTrue(project.is_public)
+
+
+class PartnerProgramCoreListTests(TestCase):
+    def setUp(self):
+        self.factory = APIRequestFactory()
+        self.view = PartnerProgramList.as_view()
+        self.now = timezone.now()
+
+    def create_program(self, **overrides):
+        defaults = {
+            "name": "Core Program",
+            "tag": "core_program",
+            "description": "Program description",
+            "city": "Moscow",
+            "data_schema": {},
+            "draft": False,
+            "status": PartnerProgram.STATUS_PUBLISHED,
+            "projects_availability": "all_users",
+            "datetime_registration_ends": self.now + timezone.timedelta(days=10),
+            "datetime_started": self.now - timezone.timedelta(days=1),
+            "datetime_finished": self.now + timezone.timedelta(days=30),
+        }
+        defaults.update(overrides)
+        return PartnerProgram.objects.create(**defaults)
+
+    def test_list_returns_only_catalog_visible_programs(self):
+        published_program = self.create_program(name="Published program")
+        self.create_program(
+            name="Draft program",
+            draft=True,
+            status=PartnerProgram.STATUS_DRAFT,
+        )
+
+        request = self.factory.get("/programs/")
+        response = self.view(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["results"][0]["id"], published_program.id)
+
+    def test_list_includes_company_summary(self):
+        company = Company.objects.create(name="Organizer", inn="1234567890")
+        program = self.create_program(company=company)
+
+        request = self.factory.get("/programs/")
+        response = self.view(request)
+
+        self.assertEqual(response.status_code, 200)
+        program_data = response.data["results"][0]
+        self.assertEqual(program_data["id"], program.id)
+        self.assertEqual(program_data["company_name"], "Organizer")
+        self.assertEqual(
+            program_data["company"],
+            {"id": company.id, "name": "Organizer", "inn": "1234567890"},
+        )
 
 
 class PartnerProgramProjectSubmitViewTests(TestCase):

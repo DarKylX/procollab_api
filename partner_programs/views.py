@@ -2,7 +2,7 @@ import io
 
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError, transaction
-from django.db.models import Exists, OuterRef, Prefetch
+from django.db.models import Exists, OuterRef, Prefetch, Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.timezone import now
@@ -64,7 +64,10 @@ User = get_user_model()
 
 
 class PartnerProgramList(generics.ListCreateAPIView):
-    queryset = PartnerProgram.objects.filter(draft=False)
+    queryset = PartnerProgram.objects.select_related("company").filter(
+        Q(status=PartnerProgram.STATUS_PUBLISHED)
+        | Q(draft=False, status=PartnerProgram.STATUS_DRAFT)
+    )
     serializer_class = PartnerProgramListSerializer
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
     pagination_class = PartnerProgramPagination
@@ -86,6 +89,10 @@ class PartnerProgramList(generics.ListCreateAPIView):
                 .distinct()
             )
 
+        status_filter = self.request.query_params.get("status")
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+
         user = self.request.user
         if not user.is_authenticated:
             return qs
@@ -98,11 +105,15 @@ class PartnerProgramList(generics.ListCreateAPIView):
 
 
 class PartnerProgramDetail(generics.RetrieveAPIView):
-    queryset = PartnerProgram.objects.prefetch_related(
-        "materials",
-        "managers",
-        "courses",
-    ).all()
+    queryset = (
+        PartnerProgram.objects.select_related("company")
+        .prefetch_related(
+            "materials",
+            "managers",
+            "courses",
+        )
+        .all()
+    )
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
     serializer_class = PartnerProgramForUnregisteredUserSerializer
 

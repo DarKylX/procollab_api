@@ -49,7 +49,7 @@ class PartnerProgramAdmin(admin.ModelAdmin):
 
     inlines = [PartnerProgramMaterialInline, PartnerProgramFieldInline]
     form = PartnerProgramAdminForm
-    list_display = ("id", "name", "tag", "city", "datetime_created")
+    list_display = ("id", "name", "tag", "city", "status", "company", "datetime_created")
     list_display_links = (
         "id",
         "name",
@@ -62,9 +62,9 @@ class PartnerProgramAdmin(admin.ModelAdmin):
         "city",
         "tag",
     )
-    list_filter = ("city",)
+    list_filter = ("city", "status", "company")
 
-    autocomplete_fields = ("managers",)
+    autocomplete_fields = ("managers", "company")
     date_hierarchy = "datetime_started"
     readonly_fields = ("datetime_created", "datetime_updated")
     fieldsets = (
@@ -82,6 +82,8 @@ class PartnerProgramAdmin(admin.ModelAdmin):
                     "max_project_rates",
                     "is_distributed_evaluation",
                     "draft",
+                    "status",
+                    "company",
                     (
                         "datetime_started",
                         "datetime_registration_ends",
