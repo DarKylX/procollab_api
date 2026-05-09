@@ -22,8 +22,17 @@ class FileView(generics.GenericAPIView):
         Creates a UserFile object and uploads the file to Selectel
         """
 
-        info = self.cdn.upload(request.FILES["file"], request.user)
-        UserFile.objects.create(
+        preserve_original = request.query_params.get("preserve_original") in (
+            "1",
+            "true",
+            "True",
+        )
+        info = self.cdn.upload(
+            request.FILES["file"],
+            request.user,
+            preserve_original=preserve_original,
+        )
+        user_file = UserFile.objects.create(
             user=request.user,
             link=info.url,
             name=info.name,
@@ -31,7 +40,13 @@ class FileView(generics.GenericAPIView):
             extension=info.extension,
             mime_type=info.mime_type,
         )
-        return Response({"url": info.url}, status=status.HTTP_201_CREATED)
+        return Response(
+            {
+                "url": info.url,
+                "file": UserFileSerializer(user_file).data,
+            },
+            status=status.HTTP_201_CREATED,
+        )
 
     def delete(self, request, *args, **kwargs):
         """deletes the file (only if the request is sent by the user who owns it!)

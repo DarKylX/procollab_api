@@ -92,14 +92,15 @@ def get_viewers(obj):
 
 def get_views_count(obj):
     obj_type = ContentType.objects.get_for_model(obj)
+    cache_key = f"views_count_{obj_type.pk}_{obj.id}"
     # cache this
-    views_count = cache.get(f"views_count_{obj_type}_{obj.id}", None)
+    views_count = cache.get(cache_key, None)
     if views_count is None:
         views_count = User.objects.filter(
             views__content_type=obj_type, views__object_id=obj.id
         ).count()
         # cache for VIEWS_CACHING_TIMEOUT seconds
-        cache.set(f"views_count_{obj_type}_{obj.id}", views_count, VIEWS_CACHING_TIMEOUT)
+        cache.set(cache_key, views_count, VIEWS_CACHING_TIMEOUT)
 
     return views_count
 
