@@ -15,6 +15,7 @@ from partner_programs.services import publish_finished_program_projects
 from partner_programs.views import (
     PartnerProgramDetail,
     PartnerProgramList,
+    PartnerProgramProjectApplyView,
     PartnerProgramProjectSubmitView,
 )
 from projects.models import Company, Project
@@ -296,6 +297,123 @@ class PartnerProgramCoreListTests(TestCase):
         self.assertEqual(
             program_data["company"],
             {"id": company.id, "name": "Organizer", "inn": "1234567890"},
+        )
+
+
+class PartnerProgramProjectApplyViewTests(TestCase):
+    def setUp(self):
+        self.factory = APIRequestFactory()
+        self.view = PartnerProgramProjectApplyView.as_view()
+        self.now = timezone.now()
+        self.user = get_user_model().objects.create_user(
+            email="leader@example.com",
+            password="pass",
+            first_name="Leader",
+            last_name="User",
+            birthday="1990-01-01",
+        )
+
+    def create_program(self, **overrides):
+        defaults = {
+            "name": "Program",
+            "tag": f"program_{PartnerProgram.objects.count()}",
+            "description": "Program description",
+            "city": "Moscow",
+            "data_schema": {},
+            "draft": False,
+            "projects_availability": "all_users",
+            "datetime_registration_ends": self.now + timezone.timedelta(days=10),
+            "datetime_started": self.now - timezone.timedelta(days=1),
+            "datetime_finished": self.now + timezone.timedelta(days=30),
+            "is_competitive": True,
+        }
+        defaults.update(overrides)
+        return PartnerProgram.objects.create(**defaults)
+
+    def create_profile(self, program, user=None):
+        return PartnerProgramUserProfile.objects.create(
+            user=user or self.user,
+            partner_program=program,
+            partner_program_data={},
+        )
+
+    def create_project(self, **overrides):
+        defaults = {
+            "leader": self.user,
+            "draft": True,
+            "is_public": False,
+            "name": "Reusable Project",
+        }
+        defaults.update(overrides)
+        return Project.objects.create(**defaults)
+
+    def post_apply(self, program, data, user=None):
+        request = self.factory.post(
+            f"/partner-programs/{program.pk}/projects/apply/",
+            data,
+            format="json",
+        )
+        force_authenticate(request, user=user or self.user)
+        return self.view(request, pk=program.pk)
+
+    def test_apply_links_existing_leader_project(self):
+        program = self.create_program()
+        profile = self.create_profile(program)
+        project = self.create_project()
+
+        response = self.post_apply(program, {"project_id": project.id})
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["project_id"], project.id)
+        program_link = PartnerProgramProject.objects.get(
+            partner_program=program,
+            project=project,
+        )
+        self.assertEqual(response.data["program_link_id"], program_link.id)
+        profile.refresh_from_db()
+        self.assertEqual(profile.project_id, project.id)
+
+    def test_apply_rejects_existing_project_from_another_leader(self):
+        program = self.create_program()
+        self.create_profile(program)
+        other_user = get_user_model().objects.create_user(
+            email="other@example.com",
+            password="pass",
+            first_name="Other",
+            last_name="Leader",
+            birthday="1990-01-01",
+        )
+        project = self.create_project(leader=other_user)
+
+        response = self.post_apply(program, {"project_id": project.id})
+
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(
+            PartnerProgramProject.objects.filter(
+                partner_program=program,
+                project=project,
+            ).exists()
+        )
+
+    def test_apply_rejects_project_already_linked_to_another_program(self):
+        program = self.create_program()
+        other_program = self.create_program()
+        self.create_profile(program)
+        project = self.create_project()
+        PartnerProgramProject.objects.create(
+            partner_program=other_program,
+            project=project,
+        )
+
+        response = self.post_apply(program, {"project_id": project.id})
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("project_id", response.data)
+        self.assertFalse(
+            PartnerProgramProject.objects.filter(
+                partner_program=program,
+                project=project,
+            ).exists()
         )
 
 

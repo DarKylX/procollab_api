@@ -403,7 +403,15 @@ class ProgramProjectCreateSerializer(serializers.ModelSerializer):
 
 
 class PartnerProgramProjectApplySerializer(serializers.Serializer):
-    project = ProgramProjectCreateSerializer()
+    project = ProgramProjectCreateSerializer(required=False)
+    project_id = serializers.IntegerField(required=False)
     program_field_values = PartnerProgramFieldValueUpdateSerializer(
         many=True, required=False
     )
+
+    def validate(self, data):
+        has_project = "project" in data
+        has_project_id = data.get("project_id") is not None
+        if has_project == has_project_id:
+            raise serializers.ValidationError("Provide either project or project_id.")
+        return data
