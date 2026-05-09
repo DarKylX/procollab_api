@@ -70,11 +70,23 @@ class PartnerProgram(models.Model):
     STATUS_PUBLISHED = "published"
     STATUS_COMPLETED = "completed"
     STATUS_ARCHIVED = "archived"
+    VERIFICATION_STATUS_NOT_REQUESTED = "not_requested"
+    VERIFICATION_STATUS_PENDING = "pending"
+    VERIFICATION_STATUS_VERIFIED = "verified"
+    VERIFICATION_STATUS_REJECTED = "rejected"
+    VERIFICATION_STATUS_REVOKED = "revoked"
     STATUS_CHOICES = [
         (STATUS_DRAFT, "Draft"),
         (STATUS_PUBLISHED, "Published"),
         (STATUS_COMPLETED, "Completed"),
         (STATUS_ARCHIVED, "Archived"),
+    ]
+    VERIFICATION_STATUS_CHOICES = [
+        (VERIFICATION_STATUS_NOT_REQUESTED, "Not requested"),
+        (VERIFICATION_STATUS_PENDING, "Pending"),
+        (VERIFICATION_STATUS_VERIFIED, "Verified"),
+        (VERIFICATION_STATUS_REJECTED, "Rejected"),
+        (VERIFICATION_STATUS_REVOKED, "Revoked"),
     ]
     PARTICIPATION_FORMAT_INDIVIDUAL = "individual"
     PARTICIPATION_FORMAT_TEAM = "team"
@@ -182,6 +194,13 @@ class PartnerProgram(models.Model):
         related_name="programs",
         verbose_name="Organizer company",
     )
+    verification_status = models.CharField(
+        max_length=20,
+        choices=VERIFICATION_STATUS_CHOICES,
+        default=VERIFICATION_STATUS_NOT_REQUESTED,
+        db_index=True,
+        verbose_name="Verification status",
+    )
     projects_availability = models.CharField(
         choices=PROJECTS_AVAILABILITY_CHOISES,
         max_length=25,
@@ -266,6 +285,100 @@ class PartnerProgram(models.Model):
     def is_project_submission_open(self) -> bool:
         deadline = self.get_project_submission_deadline()
         return deadline is None or deadline >= timezone.now()
+
+
+class PartnerProgramVerificationRequest(models.Model):
+    STATUS_PENDING = "pending"
+    STATUS_APPROVED = "approved"
+    STATUS_REJECTED = "rejected"
+
+    STATUS_CHOICES = [
+        (STATUS_PENDING, "Pending"),
+        (STATUS_APPROVED, "Approved"),
+        (STATUS_REJECTED, "Rejected"),
+    ]
+
+    REJECTION_COMPANY_NOT_CONFIRMED = "company_not_confirmed"
+    REJECTION_INSUFFICIENT_DOCUMENTS = "insufficient_documents"
+    REJECTION_INVALID_DOCUMENTS = "invalid_documents"
+    REJECTION_CONTACT_NOT_VERIFIED = "contact_not_verified"
+    REJECTION_OTHER = "other"
+
+    REJECTION_REASON_CHOICES = [
+        (REJECTION_COMPANY_NOT_CONFIRMED, "Company data is not confirmed"),
+        (REJECTION_INSUFFICIENT_DOCUMENTS, "Documents are insufficient"),
+        (REJECTION_INVALID_DOCUMENTS, "Documents are invalid"),
+        (REJECTION_CONTACT_NOT_VERIFIED, "Contact person is not verified"),
+        (REJECTION_OTHER, "Other reason"),
+    ]
+
+    program = models.ForeignKey(
+        PartnerProgram,
+        on_delete=models.CASCADE,
+        related_name="verification_requests",
+    )
+    company = models.ForeignKey(
+        "projects.Company",
+        on_delete=models.PROTECT,
+        related_name="program_verification_requests",
+    )
+    company_name = models.CharField(max_length=255, blank=True)
+    inn = models.CharField(max_length=12, blank=True, db_index=True)
+    legal_name = models.CharField(max_length=255, blank=True)
+    ogrn = models.CharField(max_length=32, blank=True)
+    website = models.URLField(blank=True)
+    region = models.CharField(max_length=255, blank=True)
+    initiator = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="program_verification_requests",
+    )
+    contact_full_name = models.CharField(max_length=255)
+    contact_position = models.CharField(max_length=255)
+    contact_email = models.EmailField()
+    contact_phone = models.CharField(max_length=64)
+    company_role_description = models.TextField()
+    documents = models.ManyToManyField(
+        UserFile,
+        related_name="program_verification_requests",
+        blank=True,
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default=STATUS_PENDING,
+        db_index=True,
+    )
+    submitted_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    decided_at = models.DateTimeField(null=True, blank=True)
+    decided_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="decided_program_verification_requests",
+    )
+    admin_comment = models.TextField(blank=True)
+    rejection_reason = models.CharField(
+        max_length=40,
+        choices=REJECTION_REASON_CHOICES,
+        blank=True,
+    )
+    datetime_updated = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Partner program verification request"
+        verbose_name_plural = "Partner program verification requests"
+        ordering = ["-submitted_at", "-id"]
+        indexes = [
+            models.Index(fields=["program", "-submitted_at"]),
+            models.Index(fields=["status", "-submitted_at"]),
+        ]
+
+    def __str__(self):
+        return f"VerificationRequest<{self.pk}> program={self.program_id}"
 
 
 class PartnerProgramUserProfile(models.Model):

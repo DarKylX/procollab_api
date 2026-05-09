@@ -10,6 +10,7 @@ from rest_framework_simplejwt.views import (
     TokenRefreshView,
     TokenVerifyView,
 )
+from partner_programs.views import CompanySearchView
 from users.authentication import ActivityTrackingJWTAuthentication
 
 schema_view = get_schema_view(
@@ -54,6 +55,8 @@ urlpatterns = [
     path("chats/", include("chats.urls", namespace="chats")),
     path("events/", include("events.urls", namespace="events")),
     path("programs/", include("partner_programs.urls", namespace="partner_programs")),
+    path("api/companies/search/", CompanySearchView.as_view(), name="company-search"),
+    path("api/admin/moderation/", include("moderation.urls", namespace="moderation")),
     path("courses/", include("courses.urls", namespace="courses")),
     path("rate-project/", include(("project_rates.urls", "rate_projects"))),
     path("feed/", include("feed.urls", namespace="feed")),
