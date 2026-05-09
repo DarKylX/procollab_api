@@ -1,3 +1,6 @@
+import uuid
+
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.db import models
@@ -201,6 +204,11 @@ class PartnerProgram(models.Model):
         db_index=True,
         verbose_name="Verification status",
     )
+    is_private = models.BooleanField(
+        default=False,
+        verbose_name="Закрытый чемпионат",
+        help_text="Доступ только по приглашению",
+    )
     projects_availability = models.CharField(
         choices=PROJECTS_AVAILABILITY_CHOISES,
         max_length=25,
@@ -254,9 +262,7 @@ class PartnerProgram(models.Model):
     datetime_created = models.DateTimeField(
         verbose_name="Дата создания", auto_now_add=True
     )
-    datetime_updated = models.DateTimeField(
-        verbose_name="Дата изменения", auto_now=True
-    )
+    datetime_updated = models.DateTimeField(verbose_name="Дата изменения", auto_now=True)
 
     def is_manager(self, user: User) -> bool:
         """
@@ -379,6 +385,72 @@ class PartnerProgramVerificationRequest(models.Model):
 
     def __str__(self):
         return f"VerificationRequest<{self.pk}> program={self.program_id}"
+
+
+def default_invite_expires_at():
+    return timezone.now() + timezone.timedelta(days=30)
+
+
+class PartnerProgramInvite(models.Model):
+    STATUS_PENDING = "pending"
+    STATUS_USED = "used"
+    STATUS_EXPIRED = "expired"
+    STATUS_REVOKED = "revoked"
+
+    STATUS_CHOICES = [
+        (STATUS_PENDING, "Ожидает использования"),
+        (STATUS_USED, "Использовано"),
+        (STATUS_EXPIRED, "Истёк срок"),
+        (STATUS_REVOKED, "Отозвано"),
+    ]
+
+    program = models.ForeignKey(
+        PartnerProgram,
+        on_delete=models.CASCADE,
+        related_name="invites",
+    )
+    email = models.EmailField(db_index=True)
+    token = models.UUIDField(default=uuid.uuid4, unique=True, db_index=True)
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default=STATUS_PENDING,
+        db_index=True,
+    )
+    accepted_at = models.DateTimeField(null=True, blank=True)
+    expires_at = models.DateTimeField(default=default_invite_expires_at, db_index=True)
+    accepted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="accepted_program_invites",
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="created_program_invites",
+    )
+    datetime_created = models.DateTimeField(auto_now_add=True)
+    datetime_updated = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Приглашение в чемпионат"
+        verbose_name_plural = "Приглашения в чемпионаты"
+        ordering = ["-datetime_created", "-id"]
+        indexes = [
+            models.Index(fields=["program", "status"]),
+            models.Index(fields=["program", "-datetime_created"]),
+        ]
+
+    def __str__(self):
+        return f"PartnerProgramInvite<{self.pk}> {self.email} program={self.program_id}"
+
+    @property
+    def is_expired(self) -> bool:
+        return self.expires_at <= timezone.now()
 
 
 class PartnerProgramUserProfile(models.Model):

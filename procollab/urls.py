@@ -10,7 +10,9 @@ from rest_framework_simplejwt.views import (
     TokenRefreshView,
     TokenVerifyView,
 )
+from partner_programs.invite_urls import program_invite_patterns, public_invite_patterns
 from partner_programs.views import CompanySearchView
+from partner_programs.views import PublicPartnerProgramInvitePageView
 from users.authentication import ActivityTrackingJWTAuthentication
 
 schema_view = get_schema_view(
@@ -55,6 +57,13 @@ urlpatterns = [
     path("chats/", include("chats.urls", namespace="chats")),
     path("events/", include("events.urls", namespace="events")),
     path("programs/", include("partner_programs.urls", namespace="partner_programs")),
+    path("api/partner-programs/", include(program_invite_patterns)),
+    path("api/invites/", include(public_invite_patterns)),
+    path(
+        "invite/<str:token>/",
+        PublicPartnerProgramInvitePageView.as_view(),
+        name="public-program-invite-page",
+    ),
     path("", include("certificates.urls", namespace="certificates")),
     path("api/companies/search/", CompanySearchView.as_view(), name="company-search"),
     path("api/admin/moderation/", include("moderation.urls", namespace="moderation")),

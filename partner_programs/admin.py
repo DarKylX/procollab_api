@@ -15,6 +15,7 @@ from partner_programs.models import (
     PartnerProgram,
     PartnerProgramField,
     PartnerProgramFieldValue,
+    PartnerProgramInvite,
     PartnerProgramMaterial,
     PartnerProgramProject,
     PartnerProgramParticipantConsent,
@@ -83,6 +84,20 @@ class PartnerProgramVerificationRequestInline(admin.StackedInline):
     autocomplete_fields = ("company", "initiator", "decided_by", "documents")
 
 
+class PartnerProgramInviteInline(admin.TabularInline):
+    model = PartnerProgramInvite
+    extra = 0
+    readonly_fields = (
+        "token",
+        "status",
+        "accepted_at",
+        "accepted_by",
+        "datetime_created",
+        "datetime_updated",
+    )
+    autocomplete_fields = ("accepted_by", "created_by")
+
+
 @admin.register(PartnerProgram)
 class PartnerProgramAdmin(admin.ModelAdmin):
     class PartnerProgramAdminForm(forms.ModelForm):
@@ -100,6 +115,7 @@ class PartnerProgramAdmin(admin.ModelAdmin):
         PartnerProgramMaterialInline,
         PartnerProgramFieldInline,
         PartnerProgramVerificationRequestInline,
+        PartnerProgramInviteInline,
     ]
     form = PartnerProgramAdminForm
     list_display = (
@@ -109,6 +125,7 @@ class PartnerProgramAdmin(admin.ModelAdmin):
         "city",
         "status",
         "verification_status",
+        "is_private",
         "company",
         "datetime_created",
     )
@@ -124,7 +141,7 @@ class PartnerProgramAdmin(admin.ModelAdmin):
         "city",
         "tag",
     )
-    list_filter = ("city", "status", "verification_status", "company")
+    list_filter = ("city", "status", "verification_status", "is_private", "company")
 
     autocomplete_fields = ("managers", "company")
     date_hierarchy = "datetime_started"
@@ -148,6 +165,7 @@ class PartnerProgramAdmin(admin.ModelAdmin):
                     "draft",
                     "status",
                     "verification_status",
+                    "is_private",
                     "company",
                     (
                         "datetime_started",
@@ -171,8 +189,10 @@ class PartnerProgramAdmin(admin.ModelAdmin):
     )
 
     def get_queryset(self, request: HttpRequest) -> QuerySet[PartnerProgram]:
-        qs = super().get_queryset(request).prefetch_related(
-            "managers", "materials", "fields"
+        qs = (
+            super()
+            .get_queryset(request)
+            .prefetch_related("managers", "materials", "fields")
         )
         if "Руководитель программы" in request.user.groups.all().values_list(
             "name", flat=True
@@ -191,9 +211,7 @@ class PartnerProgramAdmin(admin.ModelAdmin):
                 "partner_programs/admin/program_manager_change_form.html"
             )
         else:
-            self.change_form_template = (
-                "partner_programs/admin/programs_change_form.html"
-            )
+            self.change_form_template = "partner_programs/admin/programs_change_form.html"
 
         return super().change_view(request, object_id, form_url, extra_context)
 
@@ -341,6 +359,23 @@ class PartnerProgramUserProfileAdmin(admin.ModelAdmin):
         form = super().get_form(request, obj, **kwargs)
         form.base_fields["project"].required = False
         return form
+
+
+@admin.register(PartnerProgramInvite)
+class PartnerProgramInviteAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "program",
+        "email",
+        "status",
+        "expires_at",
+        "accepted_at",
+        "accepted_by",
+    )
+    list_filter = ("status", "program")
+    search_fields = ("email", "token", "program__name")
+    autocomplete_fields = ("program", "created_by", "accepted_by")
+    readonly_fields = ("token", "datetime_created", "datetime_updated")
 
 
 @admin.register(PartnerProgramMaterial)

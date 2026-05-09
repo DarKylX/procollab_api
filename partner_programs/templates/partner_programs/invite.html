@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Приглашение в чемпионат</title>
+  <style>
+    :root {
+      --brand: #1f6feb;
+      --ink: #182033;
+      --muted: #64748b;
+      --line: #dbe3ef;
+      --page: #f4f7fb;
+      --panel: #ffffff;
+      --success: #14804a;
+      --success-bg: #e9f7ef;
+      --error: #b42318;
+      --error-bg: #fff1f0;
+    }
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--page);
+      color: var(--ink);
+      font-family: Arial, Helvetica, sans-serif;
+      line-height: 1.5;
+    }
+    .page {
+      width: min(100%, 760px);
+      margin: 0 auto;
+      padding: 40px 20px;
+    }
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 28px;
+      font-weight: 700;
+      color: var(--brand);
+    }
+    .brand-mark {
+      display: grid;
+      width: 36px;
+      height: 36px;
+      place-items: center;
+      border-radius: 8px;
+      background: var(--brand);
+      color: #ffffff;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 28px;
+      box-shadow: 0 16px 40px rgba(15, 23, 42, 0.08);
+    }
+    h1 {
+      margin: 0 0 18px;
+      font-size: 30px;
+      line-height: 1.2;
+    }
+    .status {
+      margin: 0 0 20px;
+      padding: 16px 18px;
+      border-radius: 8px;
+      font-weight: 700;
+    }
+    .status-valid {
+      color: var(--success);
+      background: var(--success-bg);
+    }
+    .status-invalid {
+      color: var(--error);
+      background: var(--error-bg);
+    }
+    .details {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    .details th,
+    .details td {
+      padding: 12px 0;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+      text-align: left;
+    }
+    .details th {
+      width: 34%;
+      padding-right: 24px;
+      color: var(--muted);
+    }
+    .action {
+      display: inline-block;
+      margin-top: 24px;
+      padding: 11px 16px;
+      border-radius: 8px;
+      background: var(--brand);
+      color: #ffffff;
+      text-decoration: none;
+      font-weight: 700;
+    }
+    .message,
+    .footer {
+      color: var(--muted);
+    }
+    .footer {
+      margin-top: 24px;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <div class="brand" aria-label="PROCOLLAB">
+      <span class="brand-mark">P</span>
+      <span>PROCOLLAB</span>
+    </div>
+    <section class="panel">
+      <h1>Приглашение в закрытый чемпионат</h1>
+      {% if is_valid %}
+        <div class="status status-valid">Приглашение активно</div>
+        <table class="details">
+          <tbody>
+            <tr>
+              <th>Чемпионат</th>
+              <td>{{ invite.program_name }}</td>
+            </tr>
+            <tr>
+              <th>Организатор</th>
+              <td>{{ invite.organizer_name }}</td>
+            </tr>
+            <tr>
+              <th>Email</th>
+              <td>{{ invite.email }}</td>
+            </tr>
+            <tr>
+              <th>Действует до</th>
+              <td>{{ invite.expires_at }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <a class="action" href="{{ invite.accept_url }}">Продолжить в PROCOLLAB</a>
+      {% else %}
+        <div class="status status-invalid">Приглашение недоступно</div>
+        <p class="message">{{ message }}</p>
+      {% endif %}
+    </section>
+    <footer class="footer">Для принятия приглашения потребуется войти в аккаунт PROCOLLAB.</footer>
+  </main>
+</body>
+</html>
