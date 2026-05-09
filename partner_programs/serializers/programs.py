@@ -10,9 +10,14 @@ from partner_programs.models import (
     PartnerProgram,
     PartnerProgramField,
     PartnerProgramFieldValue,
+    PartnerProgramLegalSettings,
     PartnerProgramMaterial,
     PartnerProgramProject,
     PartnerProgramUserProfile,
+)
+from partner_programs.privacy import (
+    active_legal_documents_by_type,
+    can_view_participant_contacts,
 )
 from projects.models import Project
 from projects.validators import validate_project
@@ -32,7 +37,65 @@ class LegalDocumentSerializer(serializers.ModelSerializer):
             "version",
             "content_url",
             "content_html",
+            "is_active",
+            "created_at",
+            "updated_at",
         )
+        read_only_fields = fields
+
+
+def _active_legal_documents_payload(context):
+    cache_key = "_active_legal_documents_payload"
+    if context is not None and cache_key in context:
+        return context[cache_key]
+
+    payload = LegalDocumentSerializer(
+        active_legal_documents_by_type().values(),
+        many=True,
+    ).data
+    if context is not None:
+        context[cache_key] = payload
+    return payload
+
+
+class PartnerProgramLegalSettingsSerializer(serializers.ModelSerializer):
+    organizer_terms_accepted_by = serializers.SerializerMethodField()
+    participation_rules_file_url = serializers.SerializerMethodField()
+    terms_version = serializers.CharField(read_only=True)
+
+    class Meta:
+        model = PartnerProgramLegalSettings
+        fields = (
+            "participation_rules_file",
+            "participation_rules_file_url",
+            "participation_rules_link",
+            "additional_terms_text",
+            "organizer_terms_accepted_by",
+            "organizer_terms_accepted_at",
+            "organizer_terms_version",
+            "terms_version",
+            "updated_at",
+        )
+        read_only_fields = (
+            "organizer_terms_accepted_by",
+            "organizer_terms_accepted_at",
+            "organizer_terms_version",
+            "terms_version",
+            "updated_at",
+        )
+
+    def get_organizer_terms_accepted_by(self, obj):
+        user = obj.organizer_terms_accepted_by
+        if not user:
+            return None
+        return {
+            "id": user.id,
+            "email": user.email,
+            "full_name": user.get_full_name() or user.email,
+        }
+
+    def get_participation_rules_file_url(self, obj) -> str:
+        return getattr(obj.participation_rules_file, "link", "") or ""
 
 
 def _company_summary(company):
@@ -104,6 +167,9 @@ class PartnerProgramListSerializer(serializers.ModelSerializer):
     company_name = serializers.SerializerMethodField()
     is_verified = serializers.SerializerMethodField()
     verified_company_name = serializers.SerializerMethodField()
+    legal_documents = serializers.SerializerMethodField()
+    legal_settings = serializers.SerializerMethodField()
+    can_export_contacts = serializers.SerializerMethodField()
     likes_count = serializers.SerializerMethodField(method_name="count_likes")
     views_count = serializers.SerializerMethodField(method_name="count_views")
     short_description = serializers.SerializerMethodField(
@@ -159,6 +225,19 @@ class PartnerProgramListSerializer(serializers.ModelSerializer):
     def get_verified_company_name(self, program: PartnerProgram) -> str:
         return _verified_company_name(program)
 
+    def get_legal_documents(self, program: PartnerProgram):
+        return _active_legal_documents_payload(self.context)
+
+    def get_legal_settings(self, program: PartnerProgram):
+        try:
+            settings = program.legal_settings
+        except PartnerProgramLegalSettings.DoesNotExist:
+            return None
+        return PartnerProgramLegalSettingsSerializer(settings).data
+
+    def get_can_export_contacts(self, program: PartnerProgram) -> bool:
+        return can_view_participant_contacts(self._get_user(), program)
+
     class Meta:
         model = PartnerProgram
         fields = (
@@ -174,6 +253,9 @@ class PartnerProgramListSerializer(serializers.ModelSerializer):
             "company",
             "company_name",
             "verified_company_name",
+            "legal_documents",
+            "legal_settings",
+            "can_export_contacts",
             "is_private",
             "registration_link",
             "datetime_registration_ends",
@@ -210,6 +292,9 @@ class PartnerProgramBaseSerializerMixin(serializers.ModelSerializer):
     frozen_message = serializers.SerializerMethodField()
     freeze_reason = serializers.SerializerMethodField()
     moderation_result = serializers.SerializerMethodField()
+    legal_documents = serializers.SerializerMethodField()
+    legal_settings = serializers.SerializerMethodField()
+    can_export_contacts = serializers.SerializerMethodField()
 
     def get_materials(self, program: PartnerProgram):
         materials = program.materials.all()
@@ -312,6 +397,23 @@ class PartnerProgramBaseSerializerMixin(serializers.ModelSerializer):
             "sections_to_fix": log.sections_to_fix,
             "rejected_by": rejected_by,
         }
+
+    def get_legal_documents(self, program: PartnerProgram):
+        return _active_legal_documents_payload(self.context)
+
+    def get_legal_settings(self, program: PartnerProgram):
+        try:
+            settings = program.legal_settings
+        except PartnerProgramLegalSettings.DoesNotExist:
+            return None
+        return PartnerProgramLegalSettingsSerializer(settings).data
+
+    def get_can_export_contacts(self, program: PartnerProgram) -> bool:
+        user = self.context.get("user")
+        if not user:
+            request = self.context.get("request")
+            user = getattr(request, "user", None) if request else None
+        return can_view_participant_contacts(user, program)
 
     class Meta:
         abstract = True
@@ -456,6 +558,9 @@ class PartnerProgramForMemberSerializer(PartnerProgramBaseSerializerMixin):
             "participant_project_submitted_at",
             "freeze_reason",
             "moderation_result",
+            "legal_documents",
+            "legal_settings",
+            "can_export_contacts",
             "readiness",
             "is_user_manager",
             "courses",
@@ -497,6 +602,9 @@ class PartnerProgramForUnregisteredUserSerializer(PartnerProgramBaseSerializerMi
             "project_team_max_size",
             "freeze_reason",
             "moderation_result",
+            "legal_documents",
+            "legal_settings",
+            "can_export_contacts",
             "readiness",
             "is_user_manager",
             "courses",

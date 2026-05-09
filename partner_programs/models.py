@@ -17,11 +17,13 @@ class LegalDocument(models.Model):
     TYPE_PRIVACY_POLICY = "privacy_policy"
     TYPE_PARTICIPANT_CONSENT = "participant_consent"
     TYPE_PARTICIPATION_TERMS = "participation_terms"
+    TYPE_ORGANIZER_TERMS = "organizer_terms"
 
     TYPE_CHOICES = [
         (TYPE_PRIVACY_POLICY, "Privacy policy"),
         (TYPE_PARTICIPANT_CONSENT, "Participant personal data consent"),
         (TYPE_PARTICIPATION_TERMS, "Participation terms"),
+        (TYPE_ORGANIZER_TERMS, "Organizer terms"),
     ]
 
     type = models.CharField(max_length=64, choices=TYPE_CHOICES, db_index=True)
@@ -608,6 +610,46 @@ class PartnerProgramUserProfile(models.Model):
         return f"PartnerProgramUserProfile<{self.pk}> - {self.user} {self.project} {self.partner_program}"
 
 
+class PartnerProgramLegalSettings(models.Model):
+    program = models.OneToOneField(
+        PartnerProgram,
+        on_delete=models.CASCADE,
+        related_name="legal_settings",
+    )
+    participation_rules_file = models.ForeignKey(
+        UserFile,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="program_legal_rule_settings",
+    )
+    participation_rules_link = models.URLField(blank=True)
+    additional_terms_text = models.TextField(blank=True)
+    organizer_terms_accepted_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="accepted_program_organizer_terms",
+    )
+    organizer_terms_accepted_at = models.DateTimeField(null=True, blank=True)
+    organizer_terms_version = models.CharField(max_length=64, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Program legal settings"
+        verbose_name_plural = "Program legal settings"
+
+    @property
+    def terms_version(self) -> str:
+        updated_value = self.updated_at or self.created_at or timezone.now()
+        return f"program:{self.program_id}:{updated_value.isoformat()}"
+
+    def __str__(self):
+        return f"Legal settings for program {self.program_id}"
+
+
 class PartnerProgramParticipantConsent(models.Model):
     program = models.ForeignKey(
         PartnerProgram,
@@ -638,6 +680,54 @@ class PartnerProgramParticipantConsent(models.Model):
 
     def __str__(self):
         return f"Consent<{self.program_id}:{self.user_id}:{self.accepted_at}>"
+
+
+class PersonalDataAccessLog(models.Model):
+    ACTION_PARTICIPANT_LIST_VIEW = "participant_list_view"
+    ACTION_PARTICIPANT_CONTACT_VIEW = "participant_contact_view"
+    ACTION_PARTICIPANT_EXPORT_DOWNLOAD = "participant_export_download"
+
+    ACTION_CHOICES = [
+        (ACTION_PARTICIPANT_LIST_VIEW, "Participant list view"),
+        (ACTION_PARTICIPANT_CONTACT_VIEW, "Participant contact view"),
+        (ACTION_PARTICIPANT_EXPORT_DOWNLOAD, "Participant export download"),
+    ]
+
+    actor = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="personal_data_access_logs",
+    )
+    program = models.ForeignKey(
+        PartnerProgram,
+        on_delete=models.CASCADE,
+        related_name="personal_data_access_logs",
+    )
+    action = models.CharField(max_length=64, choices=ACTION_CHOICES)
+    object_type = models.CharField(max_length=64, blank=True)
+    object_id = models.CharField(max_length=128, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Personal data access log"
+        verbose_name_plural = "Personal data access logs"
+        ordering = ("-created_at", "-id")
+        indexes = [
+            models.Index(fields=("program", "action", "created_at")),
+            models.Index(fields=("actor", "created_at")),
+        ]
+
+    def save(self, *args, **kwargs):
+        from partner_programs.privacy import sanitize_audit_metadata
+
+        self.metadata = sanitize_audit_metadata(self.metadata)
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.action} program={self.program_id} actor={self.actor_id}"
 
 
 class PartnerProgramMaterial(models.Model):

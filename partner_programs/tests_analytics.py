@@ -10,6 +10,7 @@ from partner_programs.models import (
     PartnerProgram,
     PartnerProgramProject,
     PartnerProgramUserProfile,
+    PersonalDataAccessLog,
 )
 from projects.models import Collaborator, Project
 from project_rates.models import Criteria, ProjectEvaluation, ProjectEvaluationScore
@@ -122,6 +123,9 @@ class PartnerProgramAnalyticsTests(TestCase):
     def export_url(self):
         return f"/programs/{self.program.id}/analytics/export/"
 
+    def contact_export_url(self):
+        return f"/programs/{self.program.id}/analytics/contact-export/"
+
     def create_submitted_evaluation(self, user, total_score: str):
         evaluation = ProjectEvaluation.objects.create(
             program_project=self.program_project,
@@ -170,6 +174,37 @@ class PartnerProgramAnalyticsTests(TestCase):
         self.client.force_authenticate(self.expert_one)
         expert_response = self.client.get(self.analytics_url())
         self.assertEqual(expert_response.status_code, 403)
+
+    def test_manager_contact_export_requires_verified_program(self):
+        self.client.force_authenticate(self.manager)
+
+        analytics_response = self.client.get(self.analytics_url())
+        contact_response = self.client.get(self.contact_export_url())
+
+        self.assertEqual(analytics_response.status_code, 200)
+        self.assertFalse(analytics_response.data["can_export_contacts"])
+        self.assertEqual(contact_response.status_code, 403)
+
+    def test_verified_manager_can_export_contacts(self):
+        self.program.verification_status = PartnerProgram.VERIFICATION_STATUS_VERIFIED
+        self.program.save(update_fields=["verification_status"])
+        self.client.force_authenticate(self.manager)
+
+        response = self.client.get(self.contact_export_url())
+
+        self.assertEqual(response.status_code, 200)
+        workbook = load_workbook(io.BytesIO(response.content), read_only=True)
+        participants_sheet = workbook["Участники"]
+        headers = [cell.value for cell in next(participants_sheet.iter_rows(max_row=1))]
+        self.assertIn("Email", headers)
+        self.assertIn("Телефон", headers)
+        self.assertTrue(
+            PersonalDataAccessLog.objects.filter(
+                program=self.program,
+                action=PersonalDataAccessLog.ACTION_PARTICIPANT_EXPORT_DOWNLOAD,
+                metadata__export_type="analytics_contacts",
+            ).exists()
+        )
 
     def test_evaluation_required_zero_is_not_evaluated(self):
         self.program.max_project_rates = 0

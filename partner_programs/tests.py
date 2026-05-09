@@ -1,7 +1,7 @@
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.utils import timezone
-from rest_framework.test import APIRequestFactory, force_authenticate
+from rest_framework.test import APIClient, APIRequestFactory, force_authenticate
 from unittest.mock import patch
 
 from courses.models import Course, CourseAccessType, CourseContentStatus
@@ -9,6 +9,7 @@ from partner_programs.models import (
     LegalDocument,
     PartnerProgram,
     PartnerProgramField,
+    PartnerProgramLegalSettings,
     PartnerProgramParticipantConsent,
     PartnerProgramProject,
     PartnerProgramUserProfile,
@@ -29,11 +30,19 @@ from projects.models import Company, Project
 class PartnerProgramPrivacyLegalTests(TestCase):
     def setUp(self):
         self.factory = APIRequestFactory()
+        self.client = APIClient()
         self.now = timezone.now()
         self.user = get_user_model().objects.create_user(
             email="participant@example.com",
             password="pass",
             first_name="Participant",
+            last_name="Test",
+            birthday="1990-01-01",
+        )
+        self.manager = get_user_model().objects.create_user(
+            email="manager-privacy@example.com",
+            password="pass",
+            first_name="Manager",
             last_name="Test",
             birthday="1990-01-01",
         )
@@ -54,6 +63,7 @@ class PartnerProgramPrivacyLegalTests(TestCase):
             datetime_started=self.now,
             datetime_finished=self.now + timezone.timedelta(days=60),
         )
+        self.program.managers.add(self.manager)
         self.ensure_legal_documents()
 
     def ensure_legal_documents(self):
@@ -61,6 +71,7 @@ class PartnerProgramPrivacyLegalTests(TestCase):
             ("privacy_policy", "Privacy policy"),
             ("participant_consent", "Participant consent"),
             ("participation_terms", "Participation terms"),
+            ("organizer_terms", "Organizer terms"),
         )
         for doc_type, title in documents:
             LegalDocument.objects.update_or_create(
@@ -97,6 +108,38 @@ class PartnerProgramPrivacyLegalTests(TestCase):
         self.assertEqual(docs_by_type["privacy_policy"]["id"], latest.id)
         self.assertIn("participant_consent", docs_by_type)
         self.assertIn("participation_terms", docs_by_type)
+        self.assertIn("organizer_terms", docs_by_type)
+
+    def test_manager_can_update_and_accept_program_legal_settings(self):
+        self.client.force_authenticate(self.manager)
+
+        settings_response = self.client.patch(
+            f"/programs/{self.program.id}/legal-settings/",
+            {
+                "participation_rules_link": "https://example.com/rules.pdf",
+                "additional_terms_text": "Extra terms",
+            },
+            format="json",
+        )
+
+        self.assertEqual(settings_response.status_code, 200)
+        self.assertEqual(
+            settings_response.data["participation_rules_link"],
+            "https://example.com/rules.pdf",
+        )
+        self.assertEqual(settings_response.data["additional_terms_text"], "Extra terms")
+
+        accept_response = self.client.post(
+            f"/programs/{self.program.id}/legal-settings/accept-organizer-terms/",
+            {},
+            format="json",
+        )
+
+        self.assertEqual(accept_response.status_code, 200)
+        self.assertEqual(accept_response.data["organizer_terms_version"], "test")
+        settings = PartnerProgramLegalSettings.objects.get(program=self.program)
+        self.assertEqual(settings.organizer_terms_accepted_by, self.manager)
+        self.assertIsNotNone(settings.organizer_terms_accepted_at)
 
     def test_register_requires_personal_data_consent(self):
         request = self.factory.post(
