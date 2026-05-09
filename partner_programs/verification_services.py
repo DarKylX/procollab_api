@@ -5,6 +5,11 @@ from django.utils import timezone
 
 from moderation.models import ModerationLog
 from moderation.services import create_moderation_log
+from notifications.services import (
+    notify_verification_approved,
+    notify_verification_rejected,
+    notify_verification_submitted,
+)
 from partner_programs.models import PartnerProgram, PartnerProgramVerificationRequest
 
 
@@ -91,6 +96,7 @@ def submit_verification_request(
         status_after=program.verification_status,
         comment=f"Verification request #{verification_request.id} submitted",
     )
+    notify_verification_submitted(program, verification_request)
     return verification_request
 
 
@@ -132,7 +138,7 @@ def approve_verification_request(
     )
     program.refresh_from_db(fields=["verification_status", "company", "datetime_updated"])
 
-    return create_moderation_log(
+    log = create_moderation_log(
         program=program,
         author=author,
         action=ModerationLog.ACTION_VERIFICATION_APPROVE,
@@ -140,6 +146,8 @@ def approve_verification_request(
         status_after=program.verification_status,
         comment=comment,
     )
+    notify_verification_approved(verification_request)
+    return log
 
 
 @transaction.atomic
@@ -187,7 +195,7 @@ def reject_verification_request(
     )
     program.refresh_from_db(fields=["verification_status", "company", "datetime_updated"])
 
-    return create_moderation_log(
+    log = create_moderation_log(
         program=program,
         author=author,
         action=ModerationLog.ACTION_VERIFICATION_REJECT,
@@ -196,6 +204,8 @@ def reject_verification_request(
         comment=comment,
         rejection_reason=rejection_reason,
     )
+    notify_verification_rejected(verification_request)
+    return log
 
 
 @transaction.atomic

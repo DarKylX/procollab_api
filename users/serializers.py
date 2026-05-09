@@ -31,6 +31,7 @@ from users.models import (
     UserAchievementFile,
     UserEducation,
     UserLanguages,
+    UserNotificationPreferences,
     UserSkillConfirmation,
     UserWorkExperience,
 )
@@ -427,6 +428,19 @@ class UserLanguagesSerializer(serializers.ModelSerializer):
         fields = [
             "language",
             "language_level",
+        ]
+
+
+class UserNotificationPreferencesSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = UserNotificationPreferences
+        fields = [
+            "email_reminders_enabled",
+            "email_moderation_results",
+            "email_verification_results",
+            "email_certificate_ready",
+            "email_deadline_warnings",
+            "inapp_notifications_enabled",
         ]
 
 

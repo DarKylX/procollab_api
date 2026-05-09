@@ -27,6 +27,7 @@ from .models import (
     UserEducation,
     UserLanguages,
     UserLink,
+    UserNotificationPreferences,
     UserSkillConfirmation,
     UserWorkExperience,
 )
@@ -429,6 +430,27 @@ class UserLinkAdmin(admin.ModelAdmin):
 @admin.register(Expert)
 class ExpertAdmin(admin.ModelAdmin):
     list_display = ("id", "user")
+
+
+@admin.register(UserNotificationPreferences)
+class UserNotificationPreferencesAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "user",
+        "email_reminders_enabled",
+        "inapp_notifications_enabled",
+        "datetime_updated",
+    )
+    list_filter = (
+        "email_reminders_enabled",
+        "email_moderation_results",
+        "email_verification_results",
+        "email_certificate_ready",
+        "email_deadline_warnings",
+        "inapp_notifications_enabled",
+    )
+    search_fields = ("user__email", "user__first_name", "user__last_name")
+    readonly_fields = ("datetime_created", "datetime_updated")
 
 
 @admin.register(UserEducation)

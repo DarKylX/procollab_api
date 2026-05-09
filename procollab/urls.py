@@ -58,6 +58,7 @@ urlpatterns = [
     path("", include("certificates.urls", namespace="certificates")),
     path("api/companies/search/", CompanySearchView.as_view(), name="company-search"),
     path("api/admin/moderation/", include("moderation.urls", namespace="moderation")),
+    path("notifications/", include("notifications.urls", namespace="notifications")),
     path("courses/", include("courses.urls", namespace="courses")),
     path("rate-project/", include(("project_rates.urls", "rate_projects"))),
     path("feed/", include("feed.urls", namespace="feed")),

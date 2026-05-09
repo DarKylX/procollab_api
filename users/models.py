@@ -251,6 +251,50 @@ class CustomUser(AbstractUser):
         ordering = ["-ordering_score", "id"]
 
 
+class UserNotificationPreferences(models.Model):
+    """Настройки уведомлений пользователя."""
+
+    user = models.OneToOneField(
+        "users.CustomUser",
+        on_delete=models.CASCADE,
+        related_name="notification_preferences",
+        verbose_name="Пользователь",
+    )
+    email_reminders_enabled = models.BooleanField(
+        default=True,
+        verbose_name="Email-напоминания о незакрытых задачах",
+    )
+    email_moderation_results = models.BooleanField(
+        default=True,
+        verbose_name="Email-уведомления о результатах модерации",
+    )
+    email_verification_results = models.BooleanField(
+        default=True,
+        verbose_name="Email-уведомления о результатах верификации",
+    )
+    email_certificate_ready = models.BooleanField(
+        default=True,
+        verbose_name="Email-уведомления о готовности сертификата",
+    )
+    email_deadline_warnings = models.BooleanField(
+        default=True,
+        verbose_name="Email-уведомления о приближении дедлайнов",
+    )
+    inapp_notifications_enabled = models.BooleanField(
+        default=True,
+        verbose_name="Внутренние уведомления PROCOLLAB",
+    )
+    datetime_created = models.DateTimeField(auto_now_add=True)
+    datetime_updated = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Настройки уведомлений пользователя"
+        verbose_name_plural = "Настройки уведомлений пользователей"
+
+    def __str__(self):
+        return f"Настройки уведомлений: {self.user.email}"
+
+
 class UserAchievement(models.Model):
     """
     UserAchievement model

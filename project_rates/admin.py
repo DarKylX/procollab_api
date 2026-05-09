@@ -6,6 +6,7 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from django.shortcuts import redirect
 from django.urls import reverse
 
+from notifications.services import notify_expert_projects_assigned
 from partner_programs.models import PartnerProgramProject
 from projects.models import Project
 from users.models import Expert
@@ -260,6 +261,8 @@ class ProjectExpertAssignmentAdmin(admin.ModelAdmin):
         obj.expert = expert
         obj.project = primary_project
         super().save_model(request, obj, form, change)
+        created_assignment_ids = [obj.id]
+        created_project_ids = [primary_project.id]
 
         created = 1
         skipped = len(existing_ids)
@@ -267,14 +270,27 @@ class ProjectExpertAssignmentAdmin(admin.ModelAdmin):
 
         for project in actionable_projects[1:]:
             try:
-                ProjectExpertAssignment.objects.create(
+                assignment = ProjectExpertAssignment.objects.create(
                     partner_program=program,
                     project=project,
                     expert=expert,
                 )
+                created_assignment_ids.append(assignment.id)
+                created_project_ids.append(project.id)
                 created += 1
             except DjangoValidationError:
                 failed += 1
+
+        notify_expert_projects_assigned(
+            program=program,
+            expert=expert,
+            project_count=created,
+            batch_key=(
+                f"admin:{program.id}:{expert.id}:"
+                f"{','.join(str(pk) for pk in created_assignment_ids)}"
+            ),
+            project_ids=created_project_ids,
+        )
 
         self.message_user(
             request,
