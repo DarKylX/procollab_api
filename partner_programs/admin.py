@@ -11,14 +11,50 @@ from django.utils import timezone
 from core.utils import XlsxFileToExport, build_xlsx_download_response
 from mailing.views import MailingTemplateRender
 from partner_programs.models import (
+    LegalDocument,
     PartnerProgram,
     PartnerProgramField,
     PartnerProgramFieldValue,
     PartnerProgramMaterial,
     PartnerProgramProject,
+    PartnerProgramParticipantConsent,
     PartnerProgramUserProfile,
 )
 from partner_programs.services import prepare_project_scores_export_data
+
+
+@admin.register(LegalDocument)
+class LegalDocumentAdmin(admin.ModelAdmin):
+    list_display = ("id", "type", "title", "version", "is_active", "updated_at")
+    list_filter = ("type", "is_active")
+    search_fields = ("title", "version", "content_url", "content_html")
+    readonly_fields = ("created_at", "updated_at")
+
+
+@admin.register(PartnerProgramParticipantConsent)
+class PartnerProgramParticipantConsentAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "program",
+        "user",
+        "consent_document_version",
+        "privacy_policy_version",
+        "participation_terms_version",
+        "accepted_at",
+    )
+    list_filter = ("accepted_at",)
+    search_fields = ("program__name", "user__email")
+    readonly_fields = (
+        "program",
+        "user",
+        "consent_document_version",
+        "privacy_policy_version",
+        "participation_terms_version",
+        "consent_text_snapshot",
+        "accepted_at",
+        "ip_address",
+        "user_agent",
+    )
 
 
 class PartnerProgramMaterialInline(admin.StackedInline):

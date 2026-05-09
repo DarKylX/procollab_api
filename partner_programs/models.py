@@ -10,6 +10,38 @@ from projects.models import Project
 User = get_user_model()
 
 
+class LegalDocument(models.Model):
+    TYPE_PRIVACY_POLICY = "privacy_policy"
+    TYPE_PARTICIPANT_CONSENT = "participant_consent"
+    TYPE_PARTICIPATION_TERMS = "participation_terms"
+
+    TYPE_CHOICES = [
+        (TYPE_PRIVACY_POLICY, "Privacy policy"),
+        (TYPE_PARTICIPANT_CONSENT, "Participant personal data consent"),
+        (TYPE_PARTICIPATION_TERMS, "Participation terms"),
+    ]
+
+    type = models.CharField(max_length=64, choices=TYPE_CHOICES, db_index=True)
+    title = models.CharField(max_length=255)
+    version = models.CharField(max_length=64)
+    content_url = models.URLField(blank=True)
+    content_html = models.TextField(blank=True)
+    is_active = models.BooleanField(default=False, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Legal document"
+        verbose_name_plural = "Legal documents"
+        ordering = ("type", "-created_at", "-id")
+        indexes = [
+            models.Index(fields=("type", "is_active")),
+        ]
+
+    def __str__(self):
+        return f"{self.type}:{self.version}"
+
+
 class PartnerProgram(models.Model):
     """
     PartnerProgram model
@@ -278,6 +310,38 @@ class PartnerProgramUserProfile(models.Model):
 
     def __str__(self):
         return f"PartnerProgramUserProfile<{self.pk}> - {self.user} {self.project} {self.partner_program}"
+
+
+class PartnerProgramParticipantConsent(models.Model):
+    program = models.ForeignKey(
+        PartnerProgram,
+        on_delete=models.CASCADE,
+        related_name="participant_consents",
+    )
+    user = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="program_participant_consents",
+    )
+    consent_document_version = models.CharField(max_length=64)
+    privacy_policy_version = models.CharField(max_length=64)
+    participation_terms_version = models.CharField(max_length=128)
+    consent_text_snapshot = models.TextField()
+    accepted_at = models.DateTimeField(auto_now_add=True)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.CharField(max_length=512, blank=True)
+
+    class Meta:
+        verbose_name = "Participant championship consent"
+        verbose_name_plural = "Participant championship consents"
+        indexes = [
+            models.Index(fields=("program", "user")),
+            models.Index(fields=("accepted_at",)),
+        ]
+
+    def __str__(self):
+        return f"Consent<{self.program_id}:{self.user_id}:{self.accepted_at}>"
 
 
 class PartnerProgramMaterial(models.Model):

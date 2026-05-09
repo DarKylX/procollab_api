@@ -2,6 +2,7 @@ from django.urls import path
 
 from news.views import NewsDetail, NewsDetailSetLiked, NewsDetailSetViewed, NewsList
 from partner_programs.views import (
+    ActiveLegalDocumentsView,
     PartnerProgramCreateUserAndRegister,
     PartnerProgramDataSchema,
     PartnerProgramDetail,
@@ -21,6 +22,11 @@ from partner_programs.views import (
 app_name = "partner_programs"
 
 urlpatterns = [
+    path(
+        "legal-documents/active/",
+        ActiveLegalDocumentsView.as_view(),
+        name="active-legal-documents",
+    ),
     path("", PartnerProgramList.as_view()),
     path("<int:pk>/", PartnerProgramDetail.as_view()),
     path(

@@ -5,6 +5,7 @@ from core.services import get_likes_count, get_links, get_views_count, is_fan
 from courses.models import CourseContentStatus
 from courses.services.access import resolve_course_availability
 from partner_programs.models import (
+    LegalDocument,
     PartnerProgram,
     PartnerProgramField,
     PartnerProgramFieldValue,
@@ -18,6 +19,19 @@ from projects.validators import validate_project
 from .fields import PartnerProgramFieldValueUpdateSerializer
 
 User = get_user_model()
+
+
+class LegalDocumentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = LegalDocument
+        fields = (
+            "id",
+            "type",
+            "title",
+            "version",
+            "content_url",
+            "content_html",
+        )
 
 
 def _company_summary(company):
