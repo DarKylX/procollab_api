@@ -1,0 +1,21 @@
+Здравствуйте!
+
+Вас приглашают принять участие в закрытом чемпионате «{{ program.name }}».
+
+Организатор: {{ organizer_name }}
+
+{% if custom_message %}Сообщение организатора:
+{{ custom_message }}
+
+{% endif %}{% if description %}О чемпионате:
+{{ description }}
+
+{% endif %}Ссылка для принятия приглашения:
+{{ accept_url }}
+
+Код приглашения: {{ invite_code }}
+Короткий код: {{ short_invite_code }}
+
+Приглашение действительно до {{ invite.expires_at|date:"d.m.Y H:i" }}.
+
+Команда PROCOLLAB

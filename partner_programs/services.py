@@ -1,13 +1,21 @@
 import logging
 from collections import OrderedDict
+from uuid import UUID
 
+from django.conf import settings
+from django.core.mail import send_mail
+from django.db import transaction
+from django.db.models import CharField
 from django.db.models import Prefetch
+from django.db.models.functions import Cast
+from django.template.loader import render_to_string
 from django.utils import timezone
 
 from partner_programs.models import (
     PartnerProgram,
     PartnerProgramField,
     PartnerProgramFieldValue,
+    PartnerProgramInvite,
     PartnerProgramProject,
     PartnerProgramUserProfile,
 )
@@ -15,6 +23,207 @@ from project_rates.models import Criteria, ProjectScore
 from projects.models import Project
 
 logger = logging.getLogger()
+
+DEFAULT_INVITE_EXPIRATION_DAYS = 30
+
+
+class ProgramInviteError(Exception):
+    status_code = 400
+
+
+class ProgramInviteNotFoundError(ProgramInviteError):
+    status_code = 404
+
+
+class ProgramInviteGoneError(ProgramInviteError):
+    status_code = 410
+
+    def __init__(self, invite: PartnerProgramInvite, message: str):
+        self.invite = invite
+        super().__init__(message)
+
+
+def build_program_invite_url(token) -> str:
+    return f"{settings.FRONTEND_URL.rstrip('/')}/invite/{token}/"
+
+
+def create_program_invites(
+    *,
+    program: PartnerProgram,
+    emails: list[str],
+    created_by,
+    expires_in_days: int = DEFAULT_INVITE_EXPIRATION_DAYS,
+    custom_message: str = "",
+) -> list[PartnerProgramInvite]:
+    if not program.is_private:
+        raise ProgramInviteError(
+            "Приглашения можно выпускать только для закрытого чемпионата."
+        )
+
+    expires_at = timezone.now() + timezone.timedelta(days=expires_in_days)
+    invites = []
+    for email in emails:
+        invite = PartnerProgramInvite.objects.create(
+            program=program,
+            email=email,
+            created_by=created_by,
+            expires_at=expires_at,
+        )
+        send_program_invite_email(invite, custom_message=custom_message)
+        invites.append(invite)
+    return invites
+
+
+def send_program_invite_email(
+    invite: PartnerProgramInvite,
+    *,
+    custom_message: str = "",
+) -> int:
+    program = invite.program
+    subject = f"Приглашение в закрытый чемпионат «{program.name}»"
+    context = {
+        "invite": invite,
+        "program": program,
+        "organizer_name": get_program_organizer_name(program),
+        "accept_url": build_program_invite_url(invite.token),
+        "invite_code": str(invite.token),
+        "short_invite_code": str(invite.token).split("-", 1)[0],
+        "custom_message": custom_message,
+        "description": (program.description or "")[:500],
+    }
+    message = render_to_string("partner_programs/email/invite.txt", context)
+    return send_mail(
+        subject=subject,
+        message=message,
+        from_email=getattr(settings, "DEFAULT_FROM_EMAIL", settings.EMAIL_USER),
+        recipient_list=[invite.email],
+        fail_silently=True,
+    )
+
+
+def get_program_organizer_name(program: PartnerProgram) -> str:
+    if program.company_id:
+        return program.company.name
+    manager = program.managers.order_by("id").first()
+    if manager:
+        full_name = manager.get_full_name()
+        return full_name or manager.email
+    return "Команда PROCOLLAB"
+
+
+def resolve_program_invite_token(token: str) -> PartnerProgramInvite:
+    normalized_token = (token or "").strip()
+    if not normalized_token:
+        raise ProgramInviteNotFoundError("Приглашение не найдено или недействительно.")
+
+    qs = PartnerProgramInvite.objects.select_related(
+        "program__company",
+        "accepted_by",
+        "created_by",
+    )
+    try:
+        invite_uuid = UUID(normalized_token)
+        invite = qs.filter(token=invite_uuid).first()
+    except ValueError:
+        if len(normalized_token) < 8:
+            invite = None
+        else:
+            matches = list(
+                qs.annotate(token_text=Cast("token", output_field=CharField()))
+                .filter(token_text__istartswith=normalized_token)
+                .order_by("id")[:2]
+            )
+            invite = matches[0] if len(matches) == 1 else None
+
+    if invite is None:
+        raise ProgramInviteNotFoundError("Приглашение не найдено или недействительно.")
+    return invite
+
+
+def ensure_program_invite_can_be_used(invite: PartnerProgramInvite) -> None:
+    if invite.status != PartnerProgramInvite.STATUS_PENDING:
+        raise ProgramInviteGoneError(
+            invite,
+            f"Приглашение уже не активно: {invite.get_status_display()}.",
+        )
+    if invite.is_expired:
+        invite.status = PartnerProgramInvite.STATUS_EXPIRED
+        invite.save(update_fields=["status", "datetime_updated"])
+        raise ProgramInviteGoneError(invite, "Срок действия приглашения истёк.")
+
+
+def get_active_program_invite(token: str) -> PartnerProgramInvite:
+    invite = resolve_program_invite_token(token)
+    ensure_program_invite_can_be_used(invite)
+    return invite
+
+
+def accept_program_invite(*, token: str, user) -> PartnerProgramInvite:
+    with transaction.atomic():
+        invite = (
+            PartnerProgramInvite.objects.select_for_update()
+            .select_related("program")
+            .get(pk=resolve_program_invite_token(token).pk)
+        )
+        ensure_program_invite_can_be_used(invite)
+
+        PartnerProgramUserProfile.objects.get_or_create(
+            partner_program=invite.program,
+            user=user,
+            defaults={"partner_program_data": {"invite_token": str(invite.token)}},
+        )
+        invite.status = PartnerProgramInvite.STATUS_USED
+        invite.accepted_at = timezone.now()
+        invite.accepted_by = user
+        invite.save(
+            update_fields=[
+                "status",
+                "accepted_at",
+                "accepted_by",
+                "datetime_updated",
+            ]
+        )
+        return invite
+
+
+def revoke_program_invite(invite: PartnerProgramInvite) -> PartnerProgramInvite:
+    ensure_program_invite_can_be_used(invite)
+    invite.status = PartnerProgramInvite.STATUS_REVOKED
+    invite.save(update_fields=["status", "datetime_updated"])
+    return invite
+
+
+def resend_program_invite(
+    invite: PartnerProgramInvite,
+    *,
+    expires_in_days: int | None = None,
+    custom_message: str = "",
+) -> PartnerProgramInvite:
+    if invite.status == PartnerProgramInvite.STATUS_REVOKED:
+        raise ProgramInviteGoneError(
+            invite,
+            "Отозванное приглашение нельзя отправить повторно.",
+        )
+
+    if invite.status == PartnerProgramInvite.STATUS_USED:
+        raise ProgramInviteGoneError(
+            invite,
+            "Использованное приглашение нельзя отправить повторно.",
+        )
+
+    if invite.status == PartnerProgramInvite.STATUS_EXPIRED or invite.is_expired:
+        invite.status = PartnerProgramInvite.STATUS_PENDING
+
+    if expires_in_days is not None:
+        invite.expires_at = timezone.now() + timezone.timedelta(days=expires_in_days)
+    elif invite.expires_at <= timezone.now():
+        invite.expires_at = timezone.now() + timezone.timedelta(
+            days=DEFAULT_INVITE_EXPIRATION_DAYS
+        )
+
+    invite.save(update_fields=["status", "expires_at", "datetime_updated"])
+    send_program_invite_email(invite, custom_message=custom_message)
+    return invite
 
 
 def publish_finished_program_projects(now=None) -> int:
@@ -220,8 +429,7 @@ def validate_project_team_size_for_program(
     team_size = _calc_team_size(project)
 
     if (
-        program.participation_format
-        == PartnerProgram.PARTICIPATION_FORMAT_INDIVIDUAL
+        program.participation_format == PartnerProgram.PARTICIPATION_FORMAT_INDIVIDUAL
         and team_size != 1
     ):
         raise ValueError(
@@ -423,9 +631,7 @@ def prepare_project_scores_export_data(program_id: int) -> list[dict]:
 
         for _, expert_scores in scores_by_expert.items():
             row_data: dict[str, str] = {}
-            row_data["Название проекта"] = (
-                getattr(project, "name", "") if project else ""
-            )
+            row_data["Название проекта"] = getattr(project, "name", "") if project else ""
             row_data["Фамилия эксперта"] = (
                 expert_scores[0].user.last_name if expert_scores else ""
             )

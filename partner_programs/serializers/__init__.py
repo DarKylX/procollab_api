@@ -1,4 +1,9 @@
 from .fields import PartnerProgramFieldValueUpdateSerializer
+from .invites import (
+    PartnerProgramInviteCreateSerializer,
+    PartnerProgramInviteSerializer,
+    PublicPartnerProgramInviteSerializer,
+)
 from .programs import (
     LegalDocumentSerializer,
     PartnerProgramBaseSerializerMixin,
@@ -33,6 +38,8 @@ __all__ = [
     "PartnerProgramFieldValueUpdateSerializer",
     "PartnerProgramForMemberSerializer",
     "PartnerProgramForUnregisteredUserSerializer",
+    "PartnerProgramInviteCreateSerializer",
+    "PartnerProgramInviteSerializer",
     "PartnerProgramListSerializer",
     "PartnerProgramMaterialSerializer",
     "PartnerProgramNewUserSerializer",
@@ -43,5 +50,6 @@ __all__ = [
     "PartnerProgramVerificationSubmitSerializer",
     "ProgramProjectCreateSerializer",
     "ProgramProjectFilterRequestSerializer",
+    "PublicPartnerProgramInviteSerializer",
     "UserProgramsSerializer",
 ]

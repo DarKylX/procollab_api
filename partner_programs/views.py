@@ -3,7 +3,7 @@ import io
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError, transaction
 from django.db.models import Exists, OuterRef, Prefetch, Q
-from django.shortcuts import get_object_or_404
+from django.shortcuts import get_object_or_404, render
 from django.utils import timezone
 from django.utils.timezone import now
 from drf_yasg import openapi
@@ -32,6 +32,7 @@ from partner_programs.models import (
     PartnerProgram,
     PartnerProgramField,
     PartnerProgramFieldValue,
+    PartnerProgramInvite,
     PartnerProgramProject,
     PartnerProgramUserProfile,
 )
@@ -47,6 +48,8 @@ from partner_programs.serializers import (
     PartnerProgramFieldSerializer,
     PartnerProgramForMemberSerializer,
     PartnerProgramForUnregisteredUserSerializer,
+    PartnerProgramInviteCreateSerializer,
+    PartnerProgramInviteSerializer,
     PartnerProgramListSerializer,
     PartnerProgramNewUserSerializer,
     PartnerProgramProjectApplySerializer,
@@ -54,6 +57,7 @@ from partner_programs.serializers import (
     PartnerProgramVerificationStatusSerializer,
     PartnerProgramVerificationSubmitSerializer,
     ProgramProjectFilterRequestSerializer,
+    PublicPartnerProgramInviteSerializer,
 )
 from partner_programs.privacy import (
     active_legal_documents_by_type,
@@ -62,8 +66,16 @@ from partner_programs.privacy import (
 )
 from partner_programs.services import (
     BASE_COLUMNS,
+    ProgramInviteError,
+    ProgramInviteGoneError,
+    ProgramInviteNotFoundError,
+    accept_program_invite,
     build_program_field_columns,
+    create_program_invites,
+    get_active_program_invite,
     prepare_project_scores_export_data,
+    resend_program_invite,
+    revoke_program_invite,
     row_dict_for_link,
     validate_project_team_size_for_program,
 )
@@ -103,6 +115,21 @@ class ActiveLegalDocumentsView(generics.ListAPIView):
         return list(active_legal_documents_by_type().values())
 
 
+def user_can_access_private_program(user, program: PartnerProgram) -> bool:
+    if not user or not user.is_authenticated:
+        return False
+    if getattr(user, "is_staff", False) or getattr(user, "is_superuser", False):
+        return True
+    if program.is_manager(user):
+        return True
+    if PartnerProgramUserProfile.objects.filter(
+        partner_program=program,
+        user=user,
+    ).exists():
+        return True
+    return False
+
+
 class PartnerProgramList(generics.ListCreateAPIView):
     queryset = PartnerProgram.objects.select_related("company").filter(
         Q(status=PartnerProgram.STATUS_PUBLISHED)
@@ -116,18 +143,28 @@ class PartnerProgramList(generics.ListCreateAPIView):
         base_qs = super().get_queryset()
         participating_flag = self.request.query_params.get("participating")
         if not participating_flag:
-            qs = base_qs
+            user = self.request.user
+            if not user.is_authenticated:
+                qs = base_qs.filter(is_private=False)
+            elif getattr(user, "is_staff", False) or getattr(user, "is_superuser", False):
+                qs = base_qs
+            else:
+                qs = (
+                    base_qs.filter(is_private=False)
+                    | base_qs.filter(
+                        Q(partner_program_profiles__user=user)
+                        | Q(managers=user)
+                        | Q(experts__user=user)
+                    )
+                ).distinct()
         elif not self.request.user.is_authenticated:
             qs = PartnerProgram.objects.none()
         else:
             now = timezone.now()
-            qs = (
-                base_qs.filter(
-                    partner_program_profiles__user=self.request.user,
-                    datetime_finished__gte=now,
-                )
-                .distinct()
-            )
+            qs = base_qs.filter(
+                partner_program_profiles__user=self.request.user,
+                datetime_finished__gte=now,
+            ).distinct()
 
         status_filter = self.request.query_params.get("status")
         if status_filter:
@@ -165,6 +202,10 @@ class PartnerProgramDetail(generics.RetrieveAPIView):
 
     def get(self, request, *args, **kwargs):
         program = self.get_object()
+        if program.is_private and not user_can_access_private_program(
+            request.user, program
+        ):
+            raise NotFound("Чемпионат доступен только по приглашению.")
         is_user_member = program.users.filter(pk=request.user.pk).exists()
         serializer_class = (
             PartnerProgramForMemberSerializer
@@ -233,6 +274,178 @@ class PartnerProgramVerificationSubmitView(APIView):
         )
 
 
+class PartnerProgramInviteListCreateView(APIView):
+    permission_classes = [IsAuthenticated, IsAdminOrManagerOfProgram]
+
+    def get(self, request, pk):
+        program = get_object_or_404(PartnerProgram, pk=pk)
+        qs = PartnerProgramInvite.objects.filter(program=program).select_related(
+            "accepted_by",
+            "created_by",
+        )
+        invite_status = request.query_params.get("status")
+        if invite_status:
+            qs = qs.filter(status=invite_status)
+        return Response(PartnerProgramInviteSerializer(qs, many=True).data)
+
+    def post(self, request, pk):
+        program = get_object_or_404(PartnerProgram, pk=pk)
+        serializer = PartnerProgramInviteCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        try:
+            invites = create_program_invites(
+                program=program,
+                emails=serializer.validated_data["emails"],
+                created_by=request.user,
+                expires_in_days=serializer.validated_data["expires_in_days"],
+                custom_message=serializer.validated_data.get("custom_message", ""),
+            )
+        except ProgramInviteError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=getattr(exc, "status_code", status.HTTP_400_BAD_REQUEST),
+            )
+
+        return Response(
+            PartnerProgramInviteSerializer(invites, many=True).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class PartnerProgramInviteRevokeView(APIView):
+    permission_classes = [IsAuthenticated, IsAdminOrManagerOfProgram]
+
+    def post(self, request, pk, invite_id):
+        invite = get_object_or_404(PartnerProgramInvite, pk=invite_id, program_id=pk)
+        try:
+            revoke_program_invite(invite)
+        except ProgramInviteGoneError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_410_GONE)
+        return Response(PartnerProgramInviteSerializer(invite).data)
+
+
+class PartnerProgramInviteResendView(APIView):
+    permission_classes = [IsAuthenticated, IsAdminOrManagerOfProgram]
+
+    def post(self, request, pk, invite_id):
+        invite = get_object_or_404(
+            PartnerProgramInvite.objects.select_related("program__company"),
+            pk=invite_id,
+            program_id=pk,
+        )
+        serializer = PartnerProgramInviteCreateSerializer(
+            data={
+                "email": invite.email,
+                "expires_in_days": request.data.get("expires_in_days", 30),
+                "custom_message": request.data.get("custom_message", ""),
+            }
+        )
+        serializer.is_valid(raise_exception=True)
+        try:
+            resend_program_invite(
+                invite,
+                expires_in_days=serializer.validated_data["expires_in_days"],
+                custom_message=serializer.validated_data.get("custom_message", ""),
+            )
+        except ProgramInviteGoneError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_410_GONE)
+        return Response(PartnerProgramInviteSerializer(invite).data)
+
+
+class PartnerProgramInviteDeleteView(APIView):
+    permission_classes = [IsAuthenticated, IsAdminOrManagerOfProgram]
+
+    def delete(self, request, pk, invite_id):
+        invite = get_object_or_404(PartnerProgramInvite, pk=invite_id, program_id=pk)
+        if invite.status not in (
+            PartnerProgramInvite.STATUS_EXPIRED,
+            PartnerProgramInvite.STATUS_REVOKED,
+        ):
+            return Response(
+                {"detail": "Удалить можно только отозванное или истекшее приглашение."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        invite.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class PublicPartnerProgramInviteView(APIView):
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def get(self, request, token):
+        try:
+            invite = get_active_program_invite(token)
+        except ProgramInviteNotFoundError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        except ProgramInviteGoneError as exc:
+            return Response(
+                {
+                    "detail": str(exc),
+                    "status": exc.invite.status,
+                },
+                status=status.HTTP_410_GONE,
+            )
+        return Response(PublicPartnerProgramInviteSerializer(invite).data)
+
+
+class PublicPartnerProgramInviteAcceptView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, token):
+        try:
+            invite = accept_program_invite(token=token, user=request.user)
+        except ProgramInviteNotFoundError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        except ProgramInviteGoneError as exc:
+            return Response(
+                {
+                    "detail": str(exc),
+                    "status": exc.invite.status,
+                },
+                status=status.HTTP_410_GONE,
+            )
+        return Response(
+            {
+                "program_id": invite.program_id,
+                "invite_id": invite.id,
+                "status": invite.status,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class PublicPartnerProgramInvitePageView(APIView):
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def get(self, request, token):
+        try:
+            invite = get_active_program_invite(token)
+            response_status = status.HTTP_200_OK
+            context = {
+                "is_valid": True,
+                "invite": PublicPartnerProgramInviteSerializer(invite).data,
+            }
+        except ProgramInviteNotFoundError as exc:
+            response_status = status.HTTP_404_NOT_FOUND
+            context = {"is_valid": False, "message": str(exc)}
+        except ProgramInviteGoneError as exc:
+            response_status = status.HTTP_410_GONE
+            context = {
+                "is_valid": False,
+                "message": str(exc),
+                "invite_status": exc.invite.status,
+            }
+        return render(
+            request,
+            "partner_programs/invite.html",
+            context,
+            status=response_status,
+        )
+
+
 class PartnerProgramProjectApplyView(GenericAPIView):
     """
     Создание проекта в рамках программы (подать проект).
@@ -265,7 +478,9 @@ class PartnerProgramProjectApplyView(GenericAPIView):
                 "program_id": program.id,
                 "can_submit": program.is_project_submission_open(),
                 "submission_deadline": program.get_project_submission_deadline(),
-                "program_fields": PartnerProgramFieldSerializer(fields_qs, many=True).data,
+                "program_fields": PartnerProgramFieldSerializer(
+                    fields_qs, many=True
+                ).data,
             },
             status=status.HTTP_200_OK,
         )
@@ -306,7 +521,9 @@ class PartnerProgramProjectApplyView(GenericAPIView):
             seen_field_ids.add(field_id)
         if duplicate_ids:
             raise ValidationError(
-                {"program_field_values": f"Есть повторяющиеся field_id: {sorted(duplicate_ids)}"}
+                {
+                    "program_field_values": f"Есть повторяющиеся field_id: {sorted(duplicate_ids)}"
+                }
             )
 
         required_fields = list(
@@ -318,14 +535,18 @@ class PartnerProgramProjectApplyView(GenericAPIView):
         ]
         if missing_required:
             raise ValidationError(
-                {"program_field_values": f"Не заполнены обязательные поля: {missing_required}"}
+                {
+                    "program_field_values": f"Не заполнены обязательные поля: {missing_required}"
+                }
             )
 
         with transaction.atomic():
             if project_id is not None:
                 project = get_object_or_404(Project, pk=project_id)
                 if project.leader_id != request.user.id:
-                    raise PermissionDenied("Only project leader can link project to program.")
+                    raise PermissionDenied(
+                        "Only project leader can link project to program."
+                    )
 
                 existing_program_link = (
                     project.program_links.select_related("partner_program")
@@ -409,6 +630,12 @@ class PartnerProgramCreateUserAndRegister(generics.GenericAPIView):
         except PartnerProgram.DoesNotExist:
             return Response({"asd": "asd"}, status=status.HTTP_404_NOT_FOUND)
 
+        if program.is_private:
+            return Response(
+                data={"detail": "Registration for this program is invite-only."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         # tilda cringe
         email = data.get("email") if data.get("email") else data.get("email_")
         if not email:
@@ -438,7 +665,10 @@ class PartnerProgramCreateUserAndRegister(generics.GenericAPIView):
                         "is_active": True,  # bypass email verification
                         "onboarding_stage": None,  # bypass onboarding
                         "verification_date": timezone.now(),  # bypass manual verification
-                        **{field_name: data.get(field_name, "") for field_name in user_fields},
+                        **{
+                            field_name: data.get(field_name, "")
+                            for field_name in user_fields
+                        },
                     },
                 )
                 if created:  # Only when registering a new user.
@@ -446,7 +676,9 @@ class PartnerProgramCreateUserAndRegister(generics.GenericAPIView):
                     user.save()
 
                 user_profile_program_data = {
-                    k: v for k, v in data.items() if k not in user_fields and k != "password"
+                    k: v
+                    for k, v in data.items()
+                    if k not in user_fields and k != "password"
                 }
                 user_profile_program_data = strip_registration_consent_keys(
                     user_profile_program_data
@@ -491,6 +723,11 @@ class PartnerProgramRegister(generics.GenericAPIView):
     def post(self, request, *args, **kwargs):
         try:
             program = self.get_object()
+            if program.is_private:
+                return Response(
+                    data={"detail": "Registration for this program is invite-only."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
             if program.datetime_registration_ends < timezone.now():
                 return Response(
                     data={"detail": "Registration period has ended."},
