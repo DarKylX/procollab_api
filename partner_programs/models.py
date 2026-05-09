@@ -44,6 +44,12 @@ class PartnerProgram(models.Model):
         (STATUS_COMPLETED, "Completed"),
         (STATUS_ARCHIVED, "Archived"),
     ]
+    PARTICIPATION_FORMAT_INDIVIDUAL = "individual"
+    PARTICIPATION_FORMAT_TEAM = "team"
+    PARTICIPATION_FORMAT_CHOICES = [
+        (PARTICIPATION_FORMAT_INDIVIDUAL, "Individual"),
+        (PARTICIPATION_FORMAT_TEAM, "Team"),
+    ]
 
     name = models.TextField(
         verbose_name="Название",
@@ -154,6 +160,25 @@ class PartnerProgram(models.Model):
         default=False,
         verbose_name="Публиковать проекты после окончания программы",
         help_text="Если включено, проекты участников станут публичными после завершения программы",
+    )
+    participation_format = models.CharField(
+        max_length=20,
+        choices=PARTICIPATION_FORMAT_CHOICES,
+        default=PARTICIPATION_FORMAT_TEAM,
+        verbose_name="Participation format",
+        help_text="Team-size rule for a project linked to this championship.",
+    )
+    project_team_min_size = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        default=1,
+        verbose_name="Minimum project team size",
+    )
+    project_team_max_size = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        default=None,
+        verbose_name="Maximum project team size",
     )
     datetime_registration_ends = models.DateTimeField(
         verbose_name="Дата окончания регистрации",

@@ -52,6 +52,7 @@ from partner_programs.services import (
     build_program_field_columns,
     prepare_project_scores_export_data,
     row_dict_for_link,
+    validate_project_team_size_for_program,
 )
 from partner_programs.utils import filter_program_projects_by_field_name
 from projects.models import Collaborator, Project
@@ -535,6 +536,14 @@ class PartnerProgramProjectSubmitView(GenericAPIView):
                 {"detail": "Срок подачи проектов в программу завершён."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+        try:
+            validate_project_team_size_for_program(
+                program=program_project.partner_program,
+                project=program_project.project,
+            )
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
         program_project.submitted = True
         program_project.datetime_submitted = now()

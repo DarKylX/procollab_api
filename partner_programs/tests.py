@@ -378,6 +378,24 @@ class PartnerProgramProjectSubmitViewTests(TestCase):
         self.assertTrue(link.submitted)
         self.assertIsNotNone(link.datetime_submitted)
 
+    def test_submit_rejects_project_that_violates_team_rules(self):
+        program = self.create_program(
+            datetime_project_submission_ends=self.now + timezone.timedelta(days=1),
+            participation_format=PartnerProgram.PARTICIPATION_FORMAT_TEAM,
+            project_team_min_size=2,
+        )
+        link = self.create_project_link(program)
+
+        request = self.factory.post(
+            f"partner-program-projects/{link.pk}/submit/"
+        )
+        force_authenticate(request, user=self.user)
+        response = self.view(request, pk=link.pk)
+
+        self.assertEqual(response.status_code, 400)
+        link.refresh_from_db()
+        self.assertFalse(link.submitted)
+
 
 class PartnerProgramFieldValueUpdateSerializerValidTests(TestCase):
     def setUp(self):
