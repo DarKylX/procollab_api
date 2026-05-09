@@ -1,9 +1,12 @@
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from django.db.models import Count, Prefetch, Q, QuerySet
+from django.utils import timezone
 
 from rest_framework import generics, status
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from django_filters import rest_framework as filters
@@ -11,13 +14,22 @@ from django_filters import rest_framework as filters
 from partner_programs.models import PartnerProgram, PartnerProgramProject
 from partner_programs.serializers import ProgramProjectFilterRequestSerializer
 from partner_programs.utils import filter_program_projects_by_field_name
-from projects.models import Project
+from projects.models import Collaborator, Project, ProjectLink
 from projects.filters import ProjectFilter
-from project_rates.models import Criteria, ProjectExpertAssignment, ProjectScore
+from project_rates.models import (
+    Criteria,
+    ProjectEvaluation,
+    ProjectEvaluationScore,
+    ProjectExpertAssignment,
+    ProjectScore,
+)
 from project_rates.pagination import RateProjectsPagination
 from project_rates.serializers import (
-    ProjectScoreCreateSerializer,
+    ProjectEvaluationSaveSerializer,
     ProjectListForRateSerializer,
+    ProjectScoreCreateSerializer,
+    ProjectSubmissionDetailSerializer,
+    ProjectSubmissionListSerializer,
 )
 from users.models import Expert
 from users.permissions import IsExpert, IsExpertPost
@@ -208,3 +220,345 @@ class ProjectListForRate(generics.ListAPIView):
         context = super().get_serializer_context()
         context["program_max_rates"] = self._get_program().max_project_rates
         return context
+
+
+class ExpertSubmissionAccessMixin:
+    permission_classes = [IsAuthenticated]
+    pagination_class = RateProjectsPagination
+
+    def get_program(self) -> PartnerProgram:
+        try:
+            return PartnerProgram.objects.get(pk=self.kwargs["program_id"])
+        except PartnerProgram.DoesNotExist as exc:
+            raise NotFound("Program not found.") from exc
+
+    def is_staff_request(self) -> bool:
+        user = self.request.user
+        return bool(getattr(user, "is_staff", False) or getattr(user, "is_superuser", False))
+
+    def is_program_manager_request(self, program: PartnerProgram) -> bool:
+        user = self.request.user
+        return bool(user and user.is_authenticated and program.is_manager(user))
+
+    def ensure_program_access(self, program: PartnerProgram) -> None:
+        user = self.request.user
+        if self.is_staff_request() or self.is_program_manager_request(program):
+            return
+        if not Expert.objects.filter(user=user, programs=program).exists():
+            raise PermissionDenied("You don't have permission to evaluate this program.")
+
+    def get_accessible_program_projects(self, program: PartnerProgram):
+        self.ensure_program_access(program)
+
+        current_user_evaluations = ProjectEvaluation.objects.filter(
+            user=self.request.user
+        ).prefetch_related("evaluation_scores")
+
+        queryset = (
+            PartnerProgramProject.objects.filter(
+                partner_program=program,
+                submitted=True,
+            )
+            .select_related("partner_program", "project", "project__leader")
+            .prefetch_related(
+                Prefetch(
+                    "project__collaborator_set",
+                    queryset=Collaborator.objects.select_related("user").order_by("id"),
+                    to_attr="_prefetched_collaborators",
+                ),
+                Prefetch(
+                    "project__links",
+                    queryset=ProjectLink.objects.order_by("id"),
+                    to_attr="_prefetched_links",
+                ),
+                Prefetch(
+                    "evaluations",
+                    queryset=current_user_evaluations,
+                    to_attr="_current_user_evaluations",
+                ),
+            )
+        )
+
+        if (
+            program.is_distributed_evaluation
+            and not self.is_staff_request()
+            and not self.is_program_manager_request(program)
+        ):
+            queryset = queryset.filter(
+                project__expert_assignments__partner_program=program,
+                project__expert_assignments__expert__user=self.request.user,
+            )
+
+        return queryset.distinct()
+
+    def get_program_project(self, program: PartnerProgram) -> PartnerProgramProject:
+        program_project_id = self.kwargs["program_project_id"]
+        try:
+            return self.get_accessible_program_projects(program).get(pk=program_project_id)
+        except PartnerProgramProject.DoesNotExist as exc:
+            raise NotFound("Submitted project is not available.") from exc
+
+    def get_counters(self, queryset):
+        assigned = queryset.count()
+        evaluated = (
+            queryset.filter(
+                evaluations__user=self.request.user,
+                evaluations__status=ProjectEvaluation.STATUS_SUBMITTED,
+            )
+            .distinct()
+            .count()
+        )
+        return {
+            "assigned": assigned,
+            "evaluated": evaluated,
+            "remaining": max(assigned - evaluated, 0),
+        }
+
+    def get_program_meta(self, program: PartnerProgram):
+        return {
+            "id": program.id,
+            "name": program.name,
+            "stage": "Expert evaluation",
+            "datetime_evaluation_ends": program.datetime_evaluation_ends,
+            "is_distributed_evaluation": program.is_distributed_evaluation,
+            "participation_format": program.participation_format,
+        }
+
+    def filter_queryset_for_request(self, queryset):
+        query = (self.request.query_params.get("search") or "").strip()
+        if query:
+            queryset = queryset.filter(
+                Q(project__name__icontains=query)
+                | Q(project__leader__first_name__icontains=query)
+                | Q(project__leader__last_name__icontains=query)
+                | Q(project__leader__email__icontains=query)
+                | Q(project__collaborator_set__user__first_name__icontains=query)
+                | Q(project__collaborator_set__user__last_name__icontains=query)
+                | Q(project__collaborator_set__user__email__icontains=query)
+            )
+
+        evaluation_status = self.request.query_params.get("status")
+        if evaluation_status in ("not_started", "not_evaluated", "unrated"):
+            queryset = queryset.exclude(evaluations__user=self.request.user)
+        elif evaluation_status in (
+            ProjectEvaluation.STATUS_DRAFT,
+            ProjectEvaluation.STATUS_SUBMITTED,
+        ):
+            queryset = queryset.filter(
+                evaluations__user=self.request.user,
+                evaluations__status=evaluation_status,
+            )
+
+        return queryset.distinct()
+
+
+class ProjectSubmissionListView(ExpertSubmissionAccessMixin, generics.GenericAPIView):
+    serializer_class = ProjectSubmissionListSerializer
+
+    def get(self, request, *args, **kwargs):
+        program = self.get_program()
+        base_queryset = self.get_accessible_program_projects(program)
+        counters = self.get_counters(base_queryset)
+        queryset = self.filter_queryset_for_request(base_queryset).order_by(
+            "-datetime_submitted", "-id"
+        )
+
+        page = self.paginate_queryset(queryset)
+        serializer = self.get_serializer(page, many=True)
+        response = self.get_paginated_response(serializer.data)
+        response.data["program"] = self.get_program_meta(program)
+        response.data["counters"] = counters
+        return response
+
+
+class ExpertEvaluationProgramListView(ExpertSubmissionAccessMixin, generics.GenericAPIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        summaries = []
+
+        for program in self.get_programs_for_user():
+            base_queryset = self.get_accessible_program_projects(program)
+            counters = self.get_counters(base_queryset)
+
+            if counters["assigned"] <= 0 and not self.is_staff_request():
+                continue
+
+            summaries.append(
+                {
+                    "id": program.id,
+                    "name": program.name,
+                    "evaluation_deadline": program.datetime_evaluation_ends,
+                    "assigned": counters["assigned"],
+                    "evaluated": counters["evaluated"],
+                    "remaining": counters["remaining"],
+                    "stage": "Expert evaluation",
+                    "stage_status": self.get_stage_status(program, counters),
+                    "is_distributed_evaluation": program.is_distributed_evaluation,
+                }
+            )
+
+        return Response(summaries)
+
+    def get_programs_for_user(self):
+        queryset = PartnerProgram.objects.filter(program_projects__submitted=True)
+
+        if self.is_staff_request():
+            return queryset.distinct().order_by("datetime_evaluation_ends", "id")
+
+        managed_programs = queryset.filter(managers=self.request.user)
+
+        expert = Expert.objects.filter(user=self.request.user).first()
+        if not expert:
+            return managed_programs.distinct().order_by("datetime_evaluation_ends", "id")
+
+        expert_programs = expert.programs.filter(program_projects__submitted=True)
+        return (
+            (managed_programs | expert_programs)
+            .distinct()
+            .order_by("datetime_evaluation_ends", "id")
+        )
+
+    def get_stage_status(self, program: PartnerProgram, counters: dict) -> str:
+        deadline = program.datetime_evaluation_ends
+
+        if deadline and deadline < timezone.now():
+            return "Deadline passed"
+
+        if counters["assigned"] > 0 and counters["remaining"] == 0:
+            return "All projects evaluated"
+
+        return "Evaluation in progress"
+
+
+class ProjectSubmissionDetailView(ExpertSubmissionAccessMixin, generics.GenericAPIView):
+    serializer_class = ProjectSubmissionDetailSerializer
+
+    def get(self, request, *args, **kwargs):
+        program = self.get_program()
+        program_project = self.get_program_project(program)
+        serializer = self.get_serializer(program_project)
+        return Response(serializer.data)
+
+
+class ProjectEvaluationSaveMixin(ExpertSubmissionAccessMixin, generics.GenericAPIView):
+    serializer_class = ProjectSubmissionDetailSerializer
+
+    def save_evaluation(self, request, *, submit: bool):
+        program = self.get_program()
+        program_project = self.get_program_project(program)
+
+        payload_serializer = ProjectEvaluationSaveSerializer(data=request.data)
+        payload_serializer.is_valid(raise_exception=True)
+        payload = payload_serializer.validated_data
+
+        evaluation, _ = ProjectEvaluation.objects.get_or_create(
+            program_project=program_project,
+            user=request.user,
+            defaults={"status": ProjectEvaluation.STATUS_DRAFT},
+        )
+
+        if evaluation.is_submitted:
+            raise ValidationError(
+                {"evaluation": "Submitted evaluation cannot be changed."}
+            )
+
+        with transaction.atomic():
+            if "comment" in payload:
+                evaluation.comment = payload.get("comment") or ""
+                evaluation.save(update_fields=["comment", "datetime_updated"])
+
+            self.save_scores(
+                evaluation=evaluation,
+                program=program,
+                scores=payload.get("scores", []),
+                submit=submit,
+            )
+
+            evaluation = ProjectEvaluation.objects.prefetch_related(
+                "evaluation_scores"
+            ).get(pk=evaluation.pk)
+            try:
+                evaluation.total_score = evaluation.calculate_total_score(
+                    require_complete=submit
+                )
+            except DjangoValidationError as exc:
+                error_detail = getattr(exc, "message_dict", None) or exc.messages
+                raise ValidationError(error_detail) from exc
+
+            update_fields = ["total_score", "datetime_updated"]
+            if submit:
+                evaluation.mark_submitted()
+                update_fields.extend(["status", "submitted_at"])
+            evaluation.save(update_fields=update_fields)
+
+        program_project = self.get_program_project(program)
+        return Response(
+            ProjectSubmissionDetailSerializer(
+                program_project,
+                context=self.get_serializer_context(),
+            ).data,
+            status=status.HTTP_200_OK,
+        )
+
+    def save_scores(self, *, evaluation, program, scores, submit: bool):
+        if not scores:
+            return
+
+        criteria_ids = [item["criterion_id"] for item in scores]
+        criteria_by_id = {
+            criterion.id: criterion
+            for criterion in Criteria.objects.filter(
+                id__in=criteria_ids,
+                partner_program=program,
+            )
+        }
+        missing_ids = sorted(set(criteria_ids) - set(criteria_by_id))
+        if missing_ids:
+            raise ValidationError(
+                {"scores": f"Criteria do not belong to this program: {missing_ids}"}
+            )
+
+        for item in scores:
+            criterion = criteria_by_id[item["criterion_id"]]
+            value = item.get("value")
+
+            if value in (None, "") and criterion.type in ("int", "float") and not submit:
+                ProjectEvaluationScore.objects.filter(
+                    evaluation=evaluation,
+                    criterion=criterion,
+                ).delete()
+                continue
+
+            if submit and value in (None, "") and criterion.type in ("int", "float"):
+                raise ValidationError(
+                    {
+                        "scores": (
+                            "All numeric criteria must be filled before submission."
+                        )
+                    }
+                )
+
+            score, _ = ProjectEvaluationScore.objects.get_or_create(
+                evaluation=evaluation,
+                criterion=criterion,
+            )
+            if criterion.type == "bool" and isinstance(value, str):
+                normalized_bool = value.strip().lower()
+                if normalized_bool in ("true", "false"):
+                    value = normalized_bool == "true"
+            score.value = None if value is None else str(value)
+            try:
+                score.save()
+            except Exception as exc:
+                raise ValidationError({"scores": str(exc)}) from exc
+
+
+class ProjectEvaluationDraftView(ProjectEvaluationSaveMixin):
+    def put(self, request, *args, **kwargs):
+        return self.save_evaluation(request, submit=False)
+
+
+class ProjectEvaluationSubmitView(ProjectEvaluationSaveMixin):
+    def post(self, request, *args, **kwargs):
+        return self.save_evaluation(request, submit=True)
