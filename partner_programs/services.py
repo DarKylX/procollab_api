@@ -19,12 +19,58 @@ from partner_programs.models import (
     PartnerProgramProject,
     PartnerProgramUserProfile,
 )
+from partner_programs.privacy import (
+    REGISTRATION_REQUIRED_DOCUMENT_TYPES,
+    active_legal_documents_by_type,
+)
 from project_rates.models import Criteria, ProjectScore
 from projects.models import Project
 
 logger = logging.getLogger()
 
 DEFAULT_INVITE_EXPIRATION_DAYS = 30
+
+READINESS_LABELS = {
+    "basic_info": "Основная информация",
+    "dates": "Сроки и формат",
+    "registration": "Регистрация",
+    "legal_terms": "Правовые документы",
+    "materials": "Материалы",
+    "criteria_experts": "Критерии и эксперты",
+    "visual_assets": "Основная обложка",
+    "certificate_template": "Сертификат",
+    "verification": "Верификация",
+}
+MODERATION_REQUIRED_KEYS = (
+    "basic_info",
+    "dates",
+    "registration",
+    "legal_terms",
+)
+OPERATIONAL_ITEMS = (
+    {
+        "key": "materials",
+        "label": "Материалы",
+        "deadline": "До старта чемпионата",
+    },
+    {
+        "key": "criteria_experts",
+        "label": "Критерии и эксперты",
+        "deadline": "До этапа оценки",
+    },
+    {
+        "key": "certificate_template",
+        "label": "Сертификат",
+        "deadline": "До завершения, если нужен",
+        "optional": True,
+    },
+    {
+        "key": "verification",
+        "label": "Верификация организатора",
+        "deadline": "До публикации желательно",
+        "optional": True,
+    },
+)
 
 
 class ProgramInviteError(Exception):
@@ -41,6 +87,126 @@ class ProgramInviteGoneError(ProgramInviteError):
     def __init__(self, invite: PartnerProgramInvite, message: str):
         self.invite = invite
         super().__init__(message)
+
+
+def _readiness_percentage(checklist: dict, required_keys: list[str]) -> int:
+    if not required_keys:
+        return 100
+    completed = sum(1 for key in required_keys if checklist.get(key) is True)
+    return round(completed / len(required_keys) * 100)
+
+
+def _legal_document_blockers() -> dict:
+    active_docs = active_legal_documents_by_type()
+    missing = [
+        doc_type
+        for doc_type in REGISTRATION_REQUIRED_DOCUMENT_TYPES
+        if doc_type not in active_docs
+    ]
+    return {"missing_legal_documents": missing} if missing else {}
+
+
+def _operational_required_keys(program: PartnerProgram) -> list[str]:
+    keys = ["materials"]
+    if program.is_competitive:
+        keys.append("criteria_experts")
+    return keys
+
+
+def get_program_readiness_payload(program: PartnerProgram) -> dict:
+    checklist = program.calculate_readiness()
+    legal_blockers = _legal_document_blockers()
+    checklist["legal_terms"] = not bool(legal_blockers)
+
+    moderation_required_keys = list(MODERATION_REQUIRED_KEYS)
+    already_moderated = program.status in (
+        PartnerProgram.STATUS_PENDING_MODERATION,
+        PartnerProgram.STATUS_PUBLISHED,
+        PartnerProgram.STATUS_FROZEN,
+        PartnerProgram.STATUS_COMPLETED,
+        PartnerProgram.STATUS_ARCHIVED,
+    )
+    moderation_missing = [
+        key
+        for key in moderation_required_keys
+        if not already_moderated and checklist.get(key) is not True
+    ]
+    moderation_percentage = (
+        100
+        if already_moderated
+        else _readiness_percentage(
+            checklist,
+            moderation_required_keys,
+        )
+    )
+
+    operational_required_keys = _operational_required_keys(program)
+    operational_missing = [
+        key
+        for key in operational_required_keys
+        if checklist.get(key) not in (True, "not_applicable")
+    ]
+    operational_items = []
+    for item in OPERATIONAL_ITEMS:
+        key = item["key"]
+        value = checklist.get(key)
+        operational_items.append(
+            {
+                **item,
+                "status": value,
+                "is_ready": value in (True, "not_applicable"),
+            }
+        )
+
+    readiness_to_moderation = {
+        "percentage": moderation_percentage,
+        "checklist": {
+            key: True if already_moderated else checklist.get(key, False)
+            for key in moderation_required_keys
+        },
+        "labels": {key: READINESS_LABELS[key] for key in moderation_required_keys},
+        "required_keys": moderation_required_keys,
+        "missing_required_sections": moderation_missing,
+        "is_ready": not moderation_missing,
+    }
+    operational_keys = (
+        "materials",
+        "criteria_experts",
+        "certificate_template",
+        "verification",
+    )
+    operational_readiness = {
+        "percentage": _readiness_percentage(checklist, operational_required_keys),
+        "checklist": {key: checklist.get(key, False) for key in operational_keys},
+        "labels": {key: READINESS_LABELS[key] for key in operational_keys},
+        "required_keys": operational_required_keys,
+        "missing_required_sections": operational_missing,
+        "items": operational_items,
+        "is_ready": not operational_missing,
+    }
+
+    return {
+        "percentage": moderation_percentage,
+        "checklist": checklist,
+        "labels": READINESS_LABELS,
+        "missing_required_sections": moderation_missing,
+        "privacy_blockers": legal_blockers,
+        "can_submit_to_moderation": (
+            program.status
+            in (PartnerProgram.STATUS_DRAFT, PartnerProgram.STATUS_REJECTED)
+            and not moderation_missing
+        ),
+        "readiness_to_moderation": readiness_to_moderation,
+        "operational_readiness": operational_readiness,
+    }
+
+
+def get_moderation_submission_errors(program: PartnerProgram) -> dict[str, str]:
+    readiness = get_program_readiness_payload(program)
+    return {
+        key: "Раздел обязателен для отправки на модерацию"
+        for key in readiness["readiness_to_moderation"]["missing_required_sections"]
+    }
 
 
 def build_program_invite_url(token) -> str:

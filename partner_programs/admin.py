@@ -145,7 +145,7 @@ class PartnerProgramAdmin(admin.ModelAdmin):
 
     autocomplete_fields = ("managers", "company")
     date_hierarchy = "datetime_started"
-    readonly_fields = ("datetime_created", "datetime_updated")
+    readonly_fields = ("frozen_at", "readiness", "datetime_created", "datetime_updated")
     fieldsets = (
         (
             None,
@@ -164,6 +164,7 @@ class PartnerProgramAdmin(admin.ModelAdmin):
                     "is_distributed_evaluation",
                     "draft",
                     "status",
+                    "frozen_at",
                     "verification_status",
                     "is_private",
                     "company",
@@ -181,6 +182,7 @@ class PartnerProgramAdmin(admin.ModelAdmin):
                     ),
                     ("presentation_address", "registration_link"),
                     "data_schema",
+                    "readiness",
                 )
             },
         ),

@@ -23,6 +23,11 @@ from core.utils import (
     build_xlsx_download_response,
     sanitize_excel_value,
 )
+from moderation.services import (
+    ModerationTransitionError,
+    submit_program_to_moderation,
+    withdraw_program_from_moderation,
+)
 from partner_programs.analytics import (
     build_program_analytics_payload,
     build_program_analytics_xlsx,
@@ -73,6 +78,8 @@ from partner_programs.services import (
     build_program_field_columns,
     create_program_invites,
     get_active_program_invite,
+    get_moderation_submission_errors,
+    get_program_readiness_payload,
     prepare_project_scores_export_data,
     resend_program_invite,
     revoke_program_invite,
@@ -217,6 +224,9 @@ class PartnerProgramDetail(generics.RetrieveAPIView):
         )
         data = serializer.data
         data["is_user_member"] = is_user_member
+        data["status"] = program.status
+        data["frozen_at"] = program.frozen_at
+        data["is_frozen"] = program.status == PartnerProgram.STATUS_FROZEN
         if request.user.is_authenticated:
             add_view(program, request.user)
         return Response(data, status=status.HTTP_200_OK)
@@ -446,6 +456,113 @@ class PublicPartnerProgramInvitePageView(APIView):
         )
 
 
+class PartnerProgramReadinessView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        program = get_object_or_404(PartnerProgram, pk=pk)
+        if not self._has_access(request.user, program):
+            raise PermissionDenied("Readiness is available only to program managers.")
+
+        program.readiness = program.calculate_readiness()
+        program.save(update_fields=["readiness", "datetime_updated"])
+        return Response(get_program_readiness_payload(program), status=status.HTTP_200_OK)
+
+    def _has_access(self, user, program: PartnerProgram) -> bool:
+        return bool(
+            getattr(user, "is_staff", False)
+            or getattr(user, "is_superuser", False)
+            or program.is_manager(user)
+        )
+
+
+class PartnerProgramSubmitToModerationView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        program = get_object_or_404(PartnerProgram, pk=pk)
+        if not self._has_access(request.user, program):
+            raise PermissionDenied("Only program managers can submit to moderation.")
+
+        if program.status not in (
+            PartnerProgram.STATUS_DRAFT,
+            PartnerProgram.STATUS_REJECTED,
+        ):
+            return Response(
+                {
+                    "detail": (
+                        "Невозможно отправить на модерацию из статуса "
+                        f"{program.status}"
+                    ),
+                    "current_status": program.status,
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        errors = get_moderation_submission_errors(program)
+        readiness = get_program_readiness_payload(program)
+        if errors:
+            return Response(
+                {
+                    "detail": "Чемпионат не может быть отправлен на модерацию",
+                    "errors": errors,
+                    "privacy_blockers": readiness["privacy_blockers"],
+                    "current_status": program.status,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        log = submit_program_to_moderation(program, author=request.user)
+        program.readiness = program.calculate_readiness()
+        program.save(update_fields=["readiness", "datetime_updated"])
+        return Response(
+            {
+                "id": program.id,
+                "status": program.status,
+                "submitted_at": log.datetime_created.isoformat(),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    def _has_access(self, user, program: PartnerProgram) -> bool:
+        return bool(
+            getattr(user, "is_staff", False)
+            or getattr(user, "is_superuser", False)
+            or program.is_manager(user)
+        )
+
+
+class PartnerProgramWithdrawFromModerationView(APIView):
+    permission_classes = [IsAuthenticated, IsAdminOrManagerOfProgram]
+
+    def post(self, request, pk):
+        program = get_object_or_404(PartnerProgram, pk=pk)
+        try:
+            log = withdraw_program_from_moderation(program, author=request.user)
+        except ModerationTransitionError as exc:
+            return Response(
+                {
+                    "detail": (
+                        "Невозможно отозвать чемпионат с модерации из статуса "
+                        f"{exc.current_status}"
+                    ),
+                    "current_status": exc.current_status,
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        program.readiness = program.calculate_readiness()
+        program.save(update_fields=["readiness", "datetime_updated"])
+        return Response(
+            {
+                "id": program.id,
+                "status": program.status,
+                "withdrawn_at": log.datetime_created.isoformat(),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
 class PartnerProgramProjectApplyView(GenericAPIView):
     """
     Создание проекта в рамках программы (подать проект).
@@ -630,6 +747,15 @@ class PartnerProgramCreateUserAndRegister(generics.GenericAPIView):
         except PartnerProgram.DoesNotExist:
             return Response({"asd": "asd"}, status=status.HTTP_404_NOT_FOUND)
 
+        if program.status != PartnerProgram.STATUS_PUBLISHED:
+            return Response(
+                data={
+                    "detail": "Registration for this program is not available.",
+                    "current_status": program.status,
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
         if program.is_private:
             return Response(
                 data={"detail": "Registration for this program is invite-only."},
@@ -723,6 +849,14 @@ class PartnerProgramRegister(generics.GenericAPIView):
     def post(self, request, *args, **kwargs):
         try:
             program = self.get_object()
+            if program.status != PartnerProgram.STATUS_PUBLISHED:
+                return Response(
+                    data={
+                        "detail": "Registration for this program is not available.",
+                        "current_status": program.status,
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
             if program.is_private:
                 return Response(
                     data={"detail": "Registration for this program is invite-only."},

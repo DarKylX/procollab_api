@@ -70,8 +70,11 @@ class PartnerProgram(models.Model):
         ("experts_only", "Только экспертам"),
     ]
     STATUS_DRAFT = "draft"
+    STATUS_PENDING_MODERATION = "pending_moderation"
     STATUS_PUBLISHED = "published"
+    STATUS_REJECTED = "rejected"
     STATUS_COMPLETED = "completed"
+    STATUS_FROZEN = "frozen"
     STATUS_ARCHIVED = "archived"
     VERIFICATION_STATUS_NOT_REQUESTED = "not_requested"
     VERIFICATION_STATUS_PENDING = "pending"
@@ -80,8 +83,11 @@ class PartnerProgram(models.Model):
     VERIFICATION_STATUS_REVOKED = "revoked"
     STATUS_CHOICES = [
         (STATUS_DRAFT, "Draft"),
+        (STATUS_PENDING_MODERATION, "Pending moderation"),
         (STATUS_PUBLISHED, "Published"),
+        (STATUS_REJECTED, "Rejected"),
         (STATUS_COMPLETED, "Completed"),
+        (STATUS_FROZEN, "Frozen"),
         (STATUS_ARCHIVED, "Archived"),
     ]
     VERIFICATION_STATUS_CHOICES = [
@@ -189,6 +195,16 @@ class PartnerProgram(models.Model):
         db_index=True,
         verbose_name="Program status",
     )
+    frozen_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name="Frozen at",
+    )
+    readiness = models.JSONField(
+        default=dict,
+        blank=True,
+        verbose_name="Readiness checklist",
+    )
     company = models.ForeignKey(
         "projects.Company",
         on_delete=models.SET_NULL,
@@ -276,6 +292,101 @@ class PartnerProgram(models.Model):
     def is_published(self) -> bool:
         """Return true when the program should be visible on the public catalog."""
         return self.status == self.STATUS_PUBLISHED
+
+    @property
+    def is_editable_by_manager(self) -> bool:
+        return self.status in (
+            self.STATUS_DRAFT,
+            self.STATUS_REJECTED,
+            self.STATUS_PENDING_MODERATION,
+            self.STATUS_PUBLISHED,
+        )
+
+    @property
+    def can_be_submitted_to_moderation(self) -> bool:
+        if self.status not in (self.STATUS_DRAFT, self.STATUS_REJECTED):
+            return False
+        readiness = self.calculate_readiness()
+        return all(
+            readiness.get(key) is True for key in ("basic_info", "dates", "registration")
+        )
+
+    def _related_exists(self, related_name: str) -> bool:
+        try:
+            return getattr(self, related_name).exists()
+        except (AttributeError, ValueError):
+            return False
+
+    def calculate_readiness(self) -> dict:
+        try:
+            certificate_template = getattr(self, "certificate_template", None)
+        except AttributeError:
+            certificate_template = None
+
+        from project_rates.models import Criteria
+
+        description = (self.description or "").strip()
+        submission_deadline = self.get_project_submission_deadline()
+        dates_valid = bool(
+            self.datetime_started
+            and self.datetime_registration_ends
+            and submission_deadline
+            and self.datetime_finished
+            and self.datetime_started <= self.datetime_finished
+            and self.datetime_registration_ends <= submission_deadline
+            and submission_deadline <= self.datetime_finished
+            and (
+                not self.datetime_evaluation_ends
+                or (
+                    submission_deadline
+                    <= self.datetime_evaluation_ends
+                    <= self.datetime_finished
+                )
+            )
+        )
+        user_criteria = Criteria.objects.filter(partner_program=self).exclude(
+            name="Комментарий"
+        )
+        criteria_weight_sum = sum(criteria.weight for criteria in user_criteria)
+        criteria_experts_ready = (
+            "not_applicable"
+            if not self.is_competitive
+            else bool(
+                user_criteria.exists()
+                and criteria_weight_sum == 100
+                and self.experts.exists()
+            )
+        )
+
+        return {
+            "basic_info": bool(
+                (self.name or "").strip()
+                and description
+                and len(description) >= 180
+                and (self.city or "").strip()
+            ),
+            "dates": dates_valid,
+            "registration": bool(self.data_schema or self._related_exists("fields")),
+            "materials": self._related_exists("materials"),
+            "criteria_experts": criteria_experts_ready,
+            "visual_assets": bool(self.cover_image_address),
+            "certificate_template": certificate_template is not None,
+            "verification": self.verification_status == self.VERIFICATION_STATUS_VERIFIED,
+        }
+
+    def get_readiness_percentage(self) -> int:
+        readiness = self.calculate_readiness()
+        required_keys = ["basic_info", "dates", "registration"]
+        completed = sum(1 for key in required_keys if readiness.get(key) is True)
+        return round(completed / len(required_keys) * 100)
+
+    def get_operational_readiness_percentage(self) -> int:
+        readiness = self.calculate_readiness()
+        required_keys = ["materials"]
+        if self.is_competitive:
+            required_keys.append("criteria_experts")
+        completed = sum(1 for key in required_keys if readiness.get(key) is True)
+        return round(completed / len(required_keys) * 100)
 
     class Meta:
         verbose_name = "Программа"
