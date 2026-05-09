@@ -24,8 +24,20 @@ class ModerationLog(models.Model):
     ACTION_VERIFICATION_APPROVE = "verification_approve"
     ACTION_VERIFICATION_REJECT = "verification_reject"
     ACTION_VERIFICATION_REVOKE = "verification_revoke"
+    ACTION_AUTO_FROZEN = ACTION_AUTO_FREEZE
+    ACTION_UNFROZEN = ACTION_RESTORE
+    ACTION_ARCHIVED = ACTION_ARCHIVE
+    ACTION_VERIFICATION_APPROVED = ACTION_VERIFICATION_APPROVE
+    ACTION_VERIFICATION_REJECTED = ACTION_VERIFICATION_REJECT
+    ACTION_VERIFICATION_REVOKED = ACTION_VERIFICATION_REVOKE
 
     SUBMISSION_ACTIONS = (ACTION_SUBMIT_TO_MODERATION, ACTION_SUBMITTED_LEGACY)
+    DECISION_ACTIONS = (
+        ACTION_APPROVE,
+        ACTION_APPROVED_LEGACY,
+        ACTION_REJECT,
+        ACTION_REJECTED_LEGACY,
+    )
     REJECT_ACTIONS = (ACTION_REJECT, ACTION_REJECTED_LEGACY)
 
     ACTION_CHOICES = [
@@ -48,6 +60,22 @@ class ModerationLog(models.Model):
         (ACTION_VERIFICATION_REVOKE, "Verification revoke"),
     ]
 
+    REJECTION_REASON_INSUFFICIENT_DATA = "insufficient_data"
+    REJECTION_REASON_PLATFORM_RULES = "platform_rules"
+    REJECTION_REASON_DUPLICATE = "duplicate"
+    REJECTION_REASON_INAPPROPRIATE_CONTENT = "inappropriate_content"
+    REJECTION_REASON_SUSPICIOUS_ORGANIZER = "suspicious_organizer"
+    REJECTION_REASON_OTHER = "other"
+
+    REJECTION_REASON_CHOICES = [
+        (REJECTION_REASON_INSUFFICIENT_DATA, "Insufficient data"),
+        (REJECTION_REASON_PLATFORM_RULES, "Platform rules violation"),
+        (REJECTION_REASON_DUPLICATE, "Duplicate championship"),
+        (REJECTION_REASON_INAPPROPRIATE_CONTENT, "Inappropriate content"),
+        (REJECTION_REASON_SUSPICIOUS_ORGANIZER, "Suspicious organizer"),
+        (REJECTION_REASON_OTHER, "Other reason"),
+    ]
+
     program = models.ForeignKey(
         "partner_programs.PartnerProgram",
         on_delete=models.CASCADE,
@@ -68,7 +96,11 @@ class ModerationLog(models.Model):
     status_before = models.CharField(max_length=20, blank=True)
     status_after = models.CharField(max_length=20, blank=True)
     comment = models.TextField(blank=True)
-    rejection_reason = models.CharField(max_length=40, blank=True)
+    rejection_reason = models.CharField(
+        max_length=40,
+        choices=REJECTION_REASON_CHOICES,
+        blank=True,
+    )
     sections_to_fix = models.JSONField(default=list, blank=True)
     datetime_created = models.DateTimeField(auto_now_add=True, db_index=True)
 

@@ -4,6 +4,7 @@ from rest_framework import serializers
 from core.services import get_likes_count, get_links, get_views_count, is_fan
 from courses.models import CourseContentStatus
 from courses.services.access import resolve_course_availability
+from moderation.models import ModerationLog
 from partner_programs.models import (
     LegalDocument,
     PartnerProgram,
@@ -60,6 +61,40 @@ def _verified_company_name(program: PartnerProgram) -> str:
 
 def _is_verified(program: PartnerProgram) -> bool:
     return program.verification_status == PartnerProgram.VERIFICATION_STATUS_VERIFIED
+
+
+def _latest_program_log(program: PartnerProgram, actions):
+    prefetched_logs = getattr(program, "_prefetched_objects_cache", {}).get(
+        "moderation_logs"
+    )
+    if prefetched_logs is not None:
+        logs = [log for log in prefetched_logs if log.action in actions]
+        if not logs:
+            return None
+        return max(logs, key=lambda log: (log.datetime_created, log.id))
+
+    return (
+        program.moderation_logs.select_related("author")
+        .filter(action__in=actions)
+        .order_by("-datetime_created", "-id")
+        .first()
+    )
+
+
+def _can_view_moderation_result(user, program: PartnerProgram) -> bool:
+    return bool(
+        user
+        and getattr(user, "is_authenticated", False)
+        and (
+            getattr(user, "is_staff", False)
+            or getattr(user, "is_superuser", False)
+            or program.is_manager(user)
+        )
+    )
+
+
+def _rejection_reason_label(reason_code: str) -> str:
+    return dict(ModerationLog.REJECTION_REASON_CHOICES).get(reason_code, "")
 
 
 class PartnerProgramListSerializer(serializers.ModelSerializer):
@@ -171,6 +206,10 @@ class PartnerProgramBaseSerializerMixin(serializers.ModelSerializer):
     company_name = serializers.SerializerMethodField()
     is_verified = serializers.SerializerMethodField()
     verified_company_name = serializers.SerializerMethodField()
+    is_frozen = serializers.SerializerMethodField()
+    frozen_message = serializers.SerializerMethodField()
+    freeze_reason = serializers.SerializerMethodField()
+    moderation_result = serializers.SerializerMethodField()
 
     def get_materials(self, program: PartnerProgram):
         materials = program.materials.all()
@@ -221,6 +260,58 @@ class PartnerProgramBaseSerializerMixin(serializers.ModelSerializer):
 
     def get_verified_company_name(self, program: PartnerProgram) -> str:
         return _verified_company_name(program)
+
+    def get_is_frozen(self, program: PartnerProgram) -> bool:
+        return program.status == PartnerProgram.STATUS_FROZEN
+
+    def get_frozen_message(self, program: PartnerProgram) -> str:
+        if program.status != PartnerProgram.STATUS_FROZEN:
+            return ""
+        return "Program is temporarily frozen."
+
+    def get_freeze_reason(self, program: PartnerProgram) -> str:
+        log = _latest_program_log(
+            program,
+            (ModerationLog.ACTION_FREEZE, ModerationLog.ACTION_AUTO_FREEZE),
+        )
+        return log.comment if log else ""
+
+    def get_moderation_result(self, program: PartnerProgram):
+        if program.status != PartnerProgram.STATUS_REJECTED:
+            return None
+
+        user = self.context.get("user")
+        if not user:
+            request = self.context.get("request")
+            user = getattr(request, "user", None) if request else None
+
+        if not _can_view_moderation_result(user, program):
+            return None
+
+        log = _latest_program_log(program, ModerationLog.REJECT_ACTIONS)
+        if not log:
+            return None
+
+        rejected_by = None
+        if log.author:
+            rejected_by = {
+                "id": log.author_id,
+                "email": log.author.email,
+                "full_name": log.author.get_full_name() or log.author.email,
+            }
+
+        return {
+            "action": log.action,
+            "comment": log.comment,
+            "reason_code": log.rejection_reason,
+            "reason_label": _rejection_reason_label(log.rejection_reason),
+            "rejection_reason_code": log.rejection_reason,
+            "rejection_comment": log.comment,
+            "created_at": log.datetime_created,
+            "rejected_at": log.datetime_created,
+            "sections_to_fix": log.sections_to_fix,
+            "rejected_by": rejected_by,
+        }
 
     class Meta:
         abstract = True
@@ -363,6 +454,8 @@ class PartnerProgramForMemberSerializer(PartnerProgramBaseSerializerMixin):
             "participant_project",
             "participant_project_status",
             "participant_project_submitted_at",
+            "freeze_reason",
+            "moderation_result",
             "readiness",
             "is_user_manager",
             "courses",
@@ -378,6 +471,8 @@ class PartnerProgramForUnregisteredUserSerializer(PartnerProgramBaseSerializerMi
             "id",
             "status",
             "frozen_at",
+            "is_frozen",
+            "frozen_message",
             "verification_status",
             "is_verified",
             "name",
@@ -400,6 +495,8 @@ class PartnerProgramForUnregisteredUserSerializer(PartnerProgramBaseSerializerMi
             "participation_format",
             "project_team_min_size",
             "project_team_max_size",
+            "freeze_reason",
+            "moderation_result",
             "readiness",
             "is_user_manager",
             "courses",
