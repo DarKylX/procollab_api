@@ -1,469 +1,406 @@
-import random
+import os
 from datetime import date, timedelta
 
 from django.contrib.auth import get_user_model
 from django.contrib.contenttypes.models import ContentType
-from django.core.management.base import BaseCommand, CommandError
+from django.core.files.base import ContentFile
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.core.management.base import BaseCommand
 from django.db import transaction
-from django.db.models.signals import post_save
 from django.utils import timezone
 
-from core.models import Like, Skill, SkillCategory, SkillToObject, View
+from core.models import Skill, SkillCategory, SkillToObject
 from core.models import Specialization, SpecializationCategory
+from files.models import UserFile
+from files.service import CDN, get_default_storage
 from industries.models import Industry
-from news.models import News
+from moderation.models import ModerationLog
+from notifications.models import Notification, NotificationDelivery
 from partner_programs.models import (
+    LegalDocument,
     PartnerProgram,
     PartnerProgramField,
     PartnerProgramFieldValue,
+    PartnerProgramInvite,
+    PartnerProgramLegalSettings,
     PartnerProgramMaterial,
+    PartnerProgramParticipantConsent,
     PartnerProgramProject,
     PartnerProgramUserProfile,
+    PartnerProgramVerificationRequest,
 )
-from project_rates.models import Criteria, ProjectExpertAssignment, ProjectScore
-from projects.models import (
-    Achievement,
-    Collaborator,
-    Company,
-    Project,
-    ProjectCompany,
-    ProjectGoal,
-    ProjectLink,
-    ProjectNews,
-    Resource,
+from project_rates.models import (
+    Criteria,
+    ProjectEvaluation,
+    ProjectEvaluationScore,
+    ProjectExpertAssignment,
+    ProjectScore,
 )
-from users import constants as user_constants
-from users.models import (
-    Expert,
-    Investor,
-    Member,
-    Mentor,
-    UserAchievement,
-    UserEducation,
-    UserLanguages,
-    UserLink,
-    UserNotificationPreferences,
-    UserWorkExperience,
-)
+from projects.models import Collaborator, Company, Project, ProjectCompany, ProjectLink
+from users.models import Expert, Member, UserNotificationPreferences
 
 User = get_user_model()
 
-
-DEFAULT_PASSWORD = "DemoPassword123"
-EMAIL_DOMAIN = "demo.procollab.local"
-
-FIRST_NAMES = [
-    "Алексей",
-    "Анна",
-    "Иван",
-    "Мария",
-    "Дмитрий",
-    "Екатерина",
-    "Никита",
-    "Софья",
-    "Михаил",
-    "Виктория",
-    "Артем",
-    "Полина",
-    "Кирилл",
-    "Дарья",
-    "Глеб",
-    "Алина",
-    "Роман",
-    "Елена",
-    "Максим",
-    "Юлия",
-]
-
-LAST_NAMES = [
-    "Иванов",
-    "Смирнова",
-    "Петров",
-    "Кузнецова",
-    "Соколов",
-    "Попова",
-    "Лебедев",
-    "Новикова",
-    "Козлов",
-    "Морозова",
-    "Волков",
-    "Соловьева",
-    "Васильев",
-    "Зайцева",
-    "Павлов",
-    "Семенова",
-    "Голубев",
-    "Виноградова",
-    "Федоров",
-    "Орлова",
-]
-
-PATRONYMICS = [
-    "Андреевич",
-    "Александровна",
-    "Сергеевич",
-    "Дмитриевна",
-    "Ильич",
-    "Викторовна",
-    "Павлович",
-    "Романовна",
-    "Максимович",
-    "Игоревна",
-]
-
-REGIONS = [
-    ("Москва", "Москва"),
-    ("Московская область", "Долгопрудный"),
-    ("Санкт-Петербург", "Санкт-Петербург"),
-    ("Татарстан", "Казань"),
-    ("Новосибирская область", "Новосибирск"),
-    ("Свердловская область", "Екатеринбург"),
-    ("Краснодарский край", "Краснодар"),
-    ("Нижегородская область", "Нижний Новгород"),
-]
-
-INDUSTRIES = [
-    "Образовательные технологии",
-    "Цифровое здравоохранение",
-    "Умный город",
-    "Финансовые технологии",
-    "Экология и устойчивое развитие",
-    "Промышленная автоматизация",
-    "Креативные индустрии",
-    "Логистика и транспорт",
-]
-
-SPECIALIZATION_CATEGORIES = {
-    "Разработка": [
-        "Backend-разработчик",
-        "Frontend-разработчик",
-        "Data Scientist",
-        "Mobile-разработчик",
-    ],
-    "Продукт": [
-        "Product manager",
-        "UX/UI дизайнер",
-        "Маркетолог",
-        "Бизнес-аналитик",
-    ],
-    "Исследования": [
-        "Инженер-исследователь",
-        "Методолог",
-        "Аналитик данных",
-    ],
-}
+DEFAULT_DEMO_PASSWORD = "ProcollabDemo2026!"
+DEMO_EMAIL_DOMAIN = "demo.procollab.pro"
+DEMO_VERSION = "selectel-preprod-2026-05"
+MIN_NON_CROSS_RECORDS = 300
+DEMO_PARTICIPANT_COUNT = 42
+DEMO_EXPERT_COUNT = 8
+DEMO_ORGANIZER_COUNT = 6
+DEMO_ADMIN_COUNT = 2
+DEMO_PROJECT_COUNT = 36
 
 SKILLS_BY_CATEGORY = {
     "Разработка": [
         "Python",
         "Django",
-        "REST API",
-        "PostgreSQL",
-        "React",
+        "Django REST Framework",
+        "Angular",
         "TypeScript",
+        "PostgreSQL",
+        "Redis",
         "Docker",
+        "Git",
+        "REST API",
     ],
-    "Продукт": [
+    "Продукт и аналитика": [
+        "Product Management",
         "Customer Development",
-        "Roadmap",
+        "User Research",
+        "A/B Testing",
+        "SQL Analytics",
+        "BI dashboards",
+        "Unit economics",
+        "Roadmapping",
+    ],
+    "Дизайн": [
+        "UX Research",
+        "UI Design",
         "Figma",
-        "Product Analytics",
-        "Unit Economics",
+        "Design Systems",
+        "Prototyping",
+        "Usability Testing",
+        "Accessibility",
     ],
-    "Коммуникации": [
-        "Публичные выступления",
-        "Переговоры",
-        "Менторство",
-        "Копирайтинг",
-    ],
-    "Исследования": [
-        "ML",
+    "AI и данные": [
+        "Machine Learning",
+        "Data Engineering",
+        "NLP",
         "Computer Vision",
-        "Data Analysis",
-        "GIS",
-        "IoT",
+        "MLOps",
+        "Prompt Engineering",
+        "Data Visualization",
+    ],
+    "Бизнес": [
+        "Market Research",
+        "Go-to-market",
+        "B2B Sales",
+        "Pitch Deck",
+        "Financial Modeling",
+        "Legal Basics",
+        "Project Management",
+        "Presentation Skills",
     ],
 }
 
-PROJECT_TOPICS = [
-    (
-        "Campus Navigator",
-        "сервис навигации по кампусу с расписанием, событиями и подсказками",
-    ),
-    (
-        "EcoTrack",
-        "платформа мониторинга экологических инициатив и волонтерских активностей",
-    ),
-    (
-        "MedAssist",
-        "цифровой помощник для записи, напоминаний и анализа обращений пациентов",
-    ),
-    (
-        "SkillBridge",
-        "маркетплейс проектных задач для студентов, наставников и компаний",
-    ),
-    (
-        "SmartLab",
-        "система бронирования лабораторий и учета оборудования",
-    ),
-    (
-        "AgroVision",
-        "аналитика состояния посевов по снимкам и датчикам",
-    ),
-    (
-        "TutorFlow",
-        "инструмент для адаптивных образовательных траекторий",
-    ),
-    (
-        "CityPulse",
-        "дашборд городских данных для поиска проблемных зон и гипотез",
-    ),
-    (
-        "FinCoach",
-        "приложение для персонального финансового планирования",
-    ),
-    (
-        "EventHub",
-        "единая витрина мероприятий с рекомендациями для команд",
-    ),
-    (
-        "SupplyMind",
-        "прогнозирование задержек в поставках и подбор альтернатив",
-    ),
-    (
-        "CultureMap",
-        "карта локальных культурных пространств и творческих команд",
-    ),
-]
-
-USER_NEWS = [
-    "Опубликовал обновленное портфолио и открыт к участию в новых проектных командах.",
-    "Завершил интенсив по продуктовой аналитике и добавил новые навыки в профиль.",
-    "Провел консультацию для студенческой команды и собрал список следующих гипотез.",
-    "Подготовил подборку полезных материалов для участников проектного трека.",
-    "Получил новый опыт на хакатоне и ищет команду для развития прототипа.",
-]
-
-PROJECT_NEWS = [
-    "Команда завершила первый пользовательский сценарий и начала тестирование прототипа.",
-    "Добавлены новые задачи в дорожную карту и распределены зоны ответственности.",
-    "Проект прошел экспертную сессию, команда обновила приоритеты на ближайший спринт.",
-    "Подготовлена демонстрационная версия для сбора обратной связи от первых пользователей.",
-    "Команда договорилась о пилотном запуске и собирает метрики для оценки результата.",
-]
-
-PROGRAM_TOPICS = [
-    (
-        "Акселератор технологических команд",
-        "ACCEL-TECH",
-        "Интенсив для команд, которые хотят проверить продуктовую гипотезу, собрать MVP и подготовиться к пилотному запуску.",
-    ),
-    (
-        "Городские цифровые сервисы",
-        "CITY-DIGITAL",
-        "Программа для проектов в сфере городских данных, навигации, транспорта и комфортной городской среды.",
-    ),
-    (
-        "Индустриальный трек партнеров",
-        "INDUSTRY-LAB",
-        "Совместная программа с компаниями для поиска решений под реальные производственные и операционные задачи.",
-    ),
-    (
-        "EdTech и новые образовательные практики",
-        "EDTECH-PRACTICE",
-        "Трек для команд, создающих инструменты обучения, наставничества и оценки образовательных результатов.",
-    ),
-    (
-        "Социальные и экологические инициативы",
-        "IMPACT-START",
-        "Программа поддержки проектов с измеримым социальным, экологическим или общественным эффектом.",
-    ),
-]
-
-PROGRAM_STATUS_CYCLE = [
-    "draft",
-    "pending_moderation",
-    "published",
-    "rejected",
-    "completed",
-    "frozen",
-    "archived",
-    "published",
-    "pending_moderation",
-]
-
-PROGRAM_FILL_LEVEL_CYCLE = [
-    "minimal",
-    "full",
-    "full",
-    "partial",
-    "full",
-    "partial",
-    "minimal",
-    "partial",
-    "full",
-]
+SPECIALIZATIONS_BY_CATEGORY = {
+    "Разработка": [
+        "Backend-разработчик",
+        "Frontend-разработчик",
+        "Fullstack-разработчик",
+        "DevOps-инженер",
+        "QA-инженер",
+        "Mobile-разработчик",
+    ],
+    "Продукт": [
+        "Product manager",
+        "Project manager",
+        "Product analyst",
+        "Business analyst",
+        "Scrum master",
+    ],
+    "Дизайн": [
+        "UX/UI-дизайнер",
+        "UX-исследователь",
+        "Графический дизайнер",
+        "Дизайнер презентаций",
+        "Контент-дизайнер",
+    ],
+    "Данные и AI": [
+        "Data scientist",
+        "Data analyst",
+        "ML-инженер",
+        "Data engineer",
+        "AI product specialist",
+    ],
+    "Бизнес и коммуникации": [
+        "Маркетолог",
+        "PR-специалист",
+        "Sales manager",
+        "Юрист проекта",
+        "Финансовый аналитик",
+    ],
+}
 
 PROGRAM_FIELDS = [
     {
         "name": "track",
-        "label": "Тематический трек",
+        "label": "Направление решения",
         "field_type": "select",
         "is_required": True,
+        "help_text": "Выберите трек, к которому относится проект.",
         "show_filter": True,
-        "help_text": "Выберите направление, к которому ближе проект.",
-        "options": "EdTech|HealthTech|UrbanTech|GreenTech|IndustrialTech",
+        "options": "AI-сервисы|Городская среда|Образование|Экология",
     },
     {
-        "name": "stage",
-        "label": "Стадия проекта",
-        "field_type": "select",
+        "name": "team_role",
+        "label": "Роль команды",
+        "field_type": "radio",
         "is_required": True,
+        "help_text": "Какую роль команда берет в пилоте.",
         "show_filter": True,
-        "help_text": "Текущая стадия готовности решения.",
-        "options": "Идея|Прототип|MVP|Пилот|Первые продажи",
+        "options": "Исследование|Прототип|MVP|Пилотирование",
     },
     {
-        "name": "support_request",
-        "label": "Какая поддержка нужна",
+        "name": "motivation",
+        "label": "Почему команда хочет участвовать",
         "field_type": "textarea",
-        "is_required": False,
+        "is_required": True,
+        "help_text": "Коротко опишите мотивацию и ожидаемый результат.",
         "show_filter": False,
-        "help_text": "Кратко опишите запрос к экспертам и партнерам.",
         "options": "",
     },
 ]
 
 PROGRAM_CRITERIA = [
-    ("Проблема", "Насколько ясно описана проблема и целевая аудитория."),
-    ("Решение", "Насколько убедительно решение закрывает выбранную проблему."),
-    ("Команда", "Компетенции команды и способность довести проект до результата."),
-    ("Потенциал", "Возможность масштабирования и ценность для партнеров."),
-    ("Комментарий", "Доп. поле для впечатлений о проекте"),
+    {
+        "name": "Проблема и рынок",
+        "description": "Насколько ясно описана проблема, аудитория и ценность решения.",
+        "type": "int",
+        "min_value": 0,
+        "max_value": 10,
+        "weight": 30,
+    },
+    {
+        "name": "Технологичность",
+        "description": "Качество технического решения, реализуемость и масштабируемость.",
+        "type": "int",
+        "min_value": 0,
+        "max_value": 10,
+        "weight": 30,
+    },
+    {
+        "name": "Пользовательский опыт",
+        "description": "Удобство сценария, понятность интерфейса и работа с обратной связью.",
+        "type": "int",
+        "min_value": 0,
+        "max_value": 10,
+        "weight": 20,
+    },
+    {
+        "name": "Презентация",
+        "description": "Качество защиты, структура питча и ответы на вопросы.",
+        "type": "int",
+        "min_value": 0,
+        "max_value": 10,
+        "weight": 20,
+    },
 ]
 
-PROGRAM_NEWS = [
-    "Открыта регистрация участников, команды могут подать заявку и добавить проект.",
-    "Опубликованы материалы установочной встречи и шаблон для описания проекта.",
-    "Сформирован пул экспертов, скоро начнутся консультации и промежуточные ревью.",
-    "Добавлены критерии оценки и чек-лист подготовки к финальной защите.",
-]
-
-ACHIEVEMENTS = [
-    ("Финалист акселератора", "топ-10 команд"),
-    ("Победитель хакатона", "1 место"),
-    ("Пилот с индустриальным партнером", "подтвержден"),
-    ("Грантовая поддержка", "заявка одобрена"),
-]
-
-PROJECT_ROLES = [
-    "Backend",
-    "Frontend",
-    "Product",
-    "UX/UI",
-    "Data",
-    "Marketing",
-    "Research",
+PROGRAMS = [
+    {
+        "tag": "demo-draft-ai-city",
+        "name": "Черновик: AI-сервис для городской среды",
+        "status": PartnerProgram.STATUS_DRAFT,
+        "verification_status": PartnerProgram.VERIFICATION_STATUS_NOT_REQUESTED,
+        "is_private": False,
+        "offset": 45,
+    },
+    {
+        "tag": "demo-pending-edtech",
+        "name": "На модерации: EdTech Challenge",
+        "status": PartnerProgram.STATUS_PENDING_MODERATION,
+        "verification_status": PartnerProgram.VERIFICATION_STATUS_PENDING,
+        "is_private": False,
+        "offset": 30,
+    },
+    {
+        "tag": "demo-published-smart-campus",
+        "name": "PROCOLLAB Smart Campus Challenge",
+        "status": PartnerProgram.STATUS_PUBLISHED,
+        "verification_status": PartnerProgram.VERIFICATION_STATUS_VERIFIED,
+        "is_private": False,
+        "offset": -7,
+    },
+    {
+        "tag": "demo-rejected-fintech",
+        "name": "На доработке: FinTech Data Sprint",
+        "status": PartnerProgram.STATUS_REJECTED,
+        "verification_status": PartnerProgram.VERIFICATION_STATUS_REJECTED,
+        "is_private": False,
+        "offset": 20,
+    },
+    {
+        "tag": "demo-private-industry",
+        "name": "Закрытый чемпионат: Industrial AI Lab",
+        "status": PartnerProgram.STATUS_PUBLISHED,
+        "verification_status": PartnerProgram.VERIFICATION_STATUS_VERIFIED,
+        "is_private": True,
+        "offset": -3,
+    },
+    {
+        "tag": "demo-published-green-tech",
+        "name": "GreenTech Product Sprint",
+        "status": PartnerProgram.STATUS_PUBLISHED,
+        "verification_status": PartnerProgram.VERIFICATION_STATUS_VERIFIED,
+        "is_private": False,
+        "offset": -14,
+    },
+    {
+        "tag": "demo-published-health-data",
+        "name": "Health Data MVP Challenge",
+        "status": PartnerProgram.STATUS_PUBLISHED,
+        "verification_status": PartnerProgram.VERIFICATION_STATUS_VERIFIED,
+        "is_private": False,
+        "participation_format": PartnerProgram.PARTICIPATION_FORMAT_INDIVIDUAL,
+        "team_min": 1,
+        "team_max": 1,
+        "offset": -21,
+    },
+    {
+        "tag": "demo-pending-logistics",
+        "name": "На модерации: Logistics Optimization Cup",
+        "status": PartnerProgram.STATUS_PENDING_MODERATION,
+        "verification_status": PartnerProgram.VERIFICATION_STATUS_PENDING,
+        "is_private": False,
+        "manager": "organizer_pending",
+        "company": "pending",
+        "offset": 12,
+    },
+    {
+        "tag": "demo-rejected-culture",
+        "name": "На доработке: Creative Industries Challenge",
+        "status": PartnerProgram.STATUS_REJECTED,
+        "verification_status": PartnerProgram.VERIFICATION_STATUS_REJECTED,
+        "is_private": False,
+        "manager": "organizer_rejected",
+        "company": "rejected",
+        "offset": 18,
+    },
+    {
+        "tag": "demo-draft-unverified-company",
+        "name": "Черновик: Robotics Student League",
+        "status": PartnerProgram.STATUS_DRAFT,
+        "verification_status": PartnerProgram.VERIFICATION_STATUS_NOT_REQUESTED,
+        "is_private": False,
+        "manager": "organizer_unverified",
+        "company": "unverified",
+        "offset": 60,
+    },
+    {
+        "tag": "demo-completed-sustainable-campus",
+        "name": "Завершен: Sustainable Campus Hack",
+        "status": PartnerProgram.STATUS_COMPLETED,
+        "verification_status": PartnerProgram.VERIFICATION_STATUS_VERIFIED,
+        "is_private": False,
+        "offset": -90,
+    },
+    {
+        "tag": "demo-frozen-cybersecurity",
+        "name": "Заморожен: Cybersecurity Case Cup",
+        "status": PartnerProgram.STATUS_FROZEN,
+        "verification_status": PartnerProgram.VERIFICATION_STATUS_VERIFIED,
+        "is_private": False,
+        "offset": -40,
+    },
 ]
 
 
 class Command(BaseCommand):
-    help = "Create demo users, projects, and user/project news."
+    help = (
+        "Seed Selectel pre-prod with idempotent demo data for autonomous case "
+        "championships. Usage: python manage.py seed_demo_data or "
+        "DEMO_PASSWORD=... python manage.py seed_demo_data"
+    )
 
     def add_arguments(self, parser):
-        parser.add_argument("--users", type=int, default=30)
-        parser.add_argument("--projects", type=int, default=12)
-        parser.add_argument("--programs", type=int, default=4)
-        parser.add_argument("--news-per-user", type=int, default=2)
-        parser.add_argument("--news-per-project", type=int, default=3)
-        parser.add_argument("--seed", type=int, default=20260501)
-        parser.add_argument("--password", default=DEFAULT_PASSWORD)
+        parser.add_argument(
+            "--password",
+            default=None,
+            help="Password for all demo accounts. Defaults to DEMO_PASSWORD env.",
+        )
 
     @transaction.atomic
     def handle(self, *args, **options):
-        users_count = options["users"]
-        projects_count = options["projects"]
-        programs_count = options["programs"]
-        news_per_user = options["news_per_user"]
-        news_per_project = options["news_per_project"]
+        password = (
+            options.get("password")
+            or os.environ.get("DEMO_PASSWORD")
+            or DEFAULT_DEMO_PASSWORD
+        )
 
-        if (
-            min(
-                users_count,
-                projects_count,
-                programs_count,
-                news_per_user,
-                news_per_project,
-            )
-            < 0
-        ):
-            raise CommandError("Counts must be greater than or equal to zero.")
-        if projects_count and users_count == 0:
-            raise CommandError("At least one user is required to create projects.")
-
-        rnd = random.Random(options["seed"])
-        self._programs_count = programs_count
-
-        industries = self._ensure_industries()
         specializations = self._ensure_specializations()
         skills = self._ensure_skills()
-
-        users = [
-            self._create_user(index, rnd, specializations, skills, options["password"])
-            for index in range(1, users_count + 1)
-        ]
-        projects = [
-            self._create_project(index, rnd, users, industries, skills)
-            for index in range(1, projects_count + 1)
-        ]
-        available_users = users or list(
-            User.objects.filter(email__endswith=f"@{EMAIL_DOMAIN}").order_by("id")
+        industry = self._ensure_industry()
+        users = self._ensure_demo_users(password, specializations, skills)
+        companies = self._ensure_companies()
+        demo_file = self._ensure_demo_file(users["organizer"])
+        programs = self._ensure_programs(users, companies, demo_file)
+        published_program = programs["demo-published-smart-campus"]
+        self._ensure_project_submission(
+            program=published_program,
+            users=users,
+            company=companies["verified"],
+            industry=industry,
         )
-        available_projects = projects or list(
-            Project.objects.filter(name__contains="#").order_by("id")
+        self._ensure_project_cohort(
+            programs=programs,
+            users=users,
+            companies=companies,
+            industry=industry,
         )
-        if programs_count and (not available_users or not available_projects):
-            raise CommandError(
-                "Programs require existing demo users and projects. "
-                "Run without --users 0/--projects 0 first."
-            )
-        programs = [
-            self._create_program(index, rnd, available_users, available_projects)
-            for index in range(1, programs_count + 1)
-        ]
+        self._ensure_notifications(programs, users)
+        self._ensure_bulk_notifications(programs, users)
+        demo_record_count = self._count_demo_records()
 
-        user_news_created = self._create_user_news(users, news_per_user, rnd)
-        project_news_created = self._create_project_news(projects, news_per_project, rnd)
-        program_news_created = self._create_program_news(programs, rnd)
-
+        self.stdout.write(self.style.SUCCESS("Selectel demo data is ready."))
+        self.stdout.write("Demo login accounts:")
+        for label, user in self._login_account_items(users):
+            self.stdout.write(f"- {label}: {user.email}")
+        self.stdout.write(f"Demo password: {password}")
+        self.stdout.write(f"Published program: {published_program.name}")
+        self.stdout.write(f"Material file URL: {demo_file.link}")
         self.stdout.write(
-            self.style.SUCCESS(
-                "Demo data is ready: "
-                f"users={len(users)}, projects={len(projects)}, "
-                f"programs={len(programs)}, "
-                f"user_news={user_news_created}, "
-                f"project_news={project_news_created}, "
-                f"program_news={program_news_created}."
+            f"Demo non-cross/domain records: {demo_record_count} "
+            f"(minimum target: {MIN_NON_CROSS_RECORDS})"
+        )
+        if demo_record_count < MIN_NON_CROSS_RECORDS:
+            self.stdout.write(
+                self.style.WARNING(
+                    "Demo record count is below the diploma method target."
+                )
             )
-        )
-        self.stdout.write(
-            f"Demo users use emails demo.user.001@{EMAIL_DOMAIN} ... "
-            f"and password: {options['password']}"
-        )
-
-    def _ensure_industries(self):
-        return [self._get_or_create(Industry, name=name) for name in INDUSTRIES]
+        if password == DEFAULT_DEMO_PASSWORD:
+            self.stdout.write(
+                self.style.WARNING(
+                    "Using default pre-prod password. Override with DEMO_PASSWORD=..."
+                )
+            )
 
     def _ensure_specializations(self):
         specializations = []
-        for category_name, names in SPECIALIZATION_CATEGORIES.items():
-            category = self._get_or_create(SpecializationCategory, name=category_name)
+        for category_name, names in SPECIALIZATIONS_BY_CATEGORY.items():
+            category = self._upsert_first(
+                SpecializationCategory,
+                {"name": category_name},
+                {},
+            )
             for name in names:
                 specializations.append(
-                    self._get_or_create(
+                    self._upsert_first(
                         Specialization,
-                        category=category,
-                        name=name,
+                        {"category": category, "name": name},
+                        {},
                     )
                 )
         return specializations
@@ -471,923 +408,1197 @@ class Command(BaseCommand):
     def _ensure_skills(self):
         skills = []
         for category_name, names in SKILLS_BY_CATEGORY.items():
-            category = self._get_or_create(SkillCategory, name=category_name)
+            category = self._upsert_first(SkillCategory, {"name": category_name}, {})
             for name in names:
-                skills.append(self._get_or_create(Skill, category=category, name=name))
+                skills.append(
+                    self._upsert_first(Skill, {"category": category, "name": name}, {})
+                )
         return skills
 
-    def _create_user(self, index, rnd, specializations, skills, password):
-        first_name = FIRST_NAMES[(index - 1) % len(FIRST_NAMES)]
-        last_name = LAST_NAMES[(index - 1) % len(LAST_NAMES)]
-        patronymic = PATRONYMICS[(index - 1) % len(PATRONYMICS)]
-        region, city = REGIONS[(index - 1) % len(REGIONS)]
-        user_type = self._get_user_type(index)
-        email = f"demo.user.{index:03d}@{EMAIL_DOMAIN}"
-        speciality = rnd.choice(specializations)
+    def _ensure_industry(self):
+        return self._upsert_first(
+            Industry,
+            {"name": "Цифровые продукты и городские сервисы"},
+            {},
+        )
 
-        defaults = {
-            "first_name": first_name,
-            "last_name": last_name,
-            "patronymic": patronymic,
-            "user_type": user_type,
-            "is_active": True,
-            "birthday": self._birthday_for(index),
-            "about_me": self._user_about(first_name, speciality.name),
-            "status": rnd.choice(
-                [
-                    "Ищу проектную команду",
-                    "Готов к менторству",
-                    "Открыт к пилотам",
-                    "Помогаю с продуктовой упаковкой",
-                ]
+    def _ensure_demo_users(self, password, specializations, skills):
+        users = {
+            "admin": self._ensure_user(
+                email=f"admin@{DEMO_EMAIL_DOMAIN}",
+                first_name="Алина",
+                last_name="Платформенная",
+                password=password,
+                user_type=User.MEMBER,
+                is_staff=True,
+                is_superuser=True,
+                specialization=specializations[0],
             ),
-            "region": region,
-            "city": city,
-            "phone_number": f"+7916{1000000 + index:07d}",
-            "v2_speciality": speciality,
-            "speciality": speciality.name,
-            "avatar": f"https://i.pravatar.cc/300?u=procollab-demo-{index:03d}",
-            "onboarding_stage": user_constants.OnboardingStage.completed.value,
-            "verification_date": timezone.localdate() - timedelta(days=index % 30),
-            "last_activity": timezone.now() - timedelta(hours=index * 3),
-            "is_mospolytech_student": index % 3 != 0,
-            "study_group": f"22{index % 9 + 1}-0{index % 4 + 1}",
+            "staff": self._ensure_user(
+                email=f"staff@{DEMO_EMAIL_DOMAIN}",
+                first_name="Степан",
+                last_name="Модераторов",
+                password=password,
+                user_type=User.MEMBER,
+                is_staff=True,
+                specialization=specializations[4],
+            ),
+            "organizer": self._ensure_user(
+                email=f"organizer@{DEMO_EMAIL_DOMAIN}",
+                first_name="Олег",
+                last_name="Организаторов",
+                password=password,
+                user_type=User.MEMBER,
+                specialization=specializations[1],
+            ),
+            "organizer_pending": self._ensure_user(
+                email=f"organizer.pending@{DEMO_EMAIL_DOMAIN}",
+                first_name="Полина",
+                last_name="Проверяемая",
+                password=password,
+                user_type=User.MEMBER,
+                specialization=specializations[6],
+            ),
+            "organizer_rejected": self._ensure_user(
+                email=f"organizer.rejected@{DEMO_EMAIL_DOMAIN}",
+                first_name="Роман",
+                last_name="Доработкин",
+                password=password,
+                user_type=User.MEMBER,
+                specialization=specializations[7],
+            ),
+            "organizer_unverified": self._ensure_user(
+                email=f"organizer.unverified@{DEMO_EMAIL_DOMAIN}",
+                first_name="Ульяна",
+                last_name="Черновикова",
+                password=password,
+                user_type=User.MEMBER,
+                specialization=specializations[8],
+            ),
+            "expert": self._ensure_user(
+                email=f"expert@{DEMO_EMAIL_DOMAIN}",
+                first_name="Элина",
+                last_name="Экспертова",
+                password=password,
+                user_type=User.EXPERT,
+                specialization=specializations[-5],
+            ),
+            "expert_product": self._ensure_user(
+                email=f"expert.product@{DEMO_EMAIL_DOMAIN}",
+                first_name="Петр",
+                last_name="Продуктов",
+                password=password,
+                user_type=User.EXPERT,
+                specialization=specializations[-4],
+            ),
+            "participant": self._ensure_user(
+                email=f"participant@{DEMO_EMAIL_DOMAIN}",
+                first_name="Павел",
+                last_name="Участников",
+                password=password,
+                user_type=User.MEMBER,
+                specialization=specializations[2],
+            ),
+            "teammate": self._ensure_user(
+                email=f"teammate@{DEMO_EMAIL_DOMAIN}",
+                first_name="Тамара",
+                last_name="Командная",
+                password=password,
+                user_type=User.MEMBER,
+                specialization=specializations[3],
+            ),
         }
 
+        users["participant_pool"] = [
+            users["participant"],
+            users["teammate"],
+            *self._ensure_user_cohort(
+                prefix="participant",
+                count=DEMO_PARTICIPANT_COUNT,
+                password=password,
+                user_type=User.MEMBER,
+                specializations=specializations,
+            ),
+        ]
+        users["expert_pool"] = [
+            users["expert"],
+            users["expert_product"],
+            *self._ensure_user_cohort(
+                prefix="expert",
+                count=DEMO_EXPERT_COUNT,
+                password=password,
+                user_type=User.EXPERT,
+                specializations=specializations,
+            ),
+        ]
+        users["organizer_pool"] = [
+            users["organizer"],
+            users["organizer_pending"],
+            users["organizer_rejected"],
+            users["organizer_unverified"],
+            *self._ensure_user_cohort(
+                prefix="organizer",
+                count=DEMO_ORGANIZER_COUNT,
+                password=password,
+                user_type=User.MEMBER,
+                specializations=specializations,
+            ),
+        ]
+        users["admin_pool"] = [
+            users["admin"],
+            users["staff"],
+            *self._ensure_user_cohort(
+                prefix="admin",
+                count=DEMO_ADMIN_COUNT,
+                password=password,
+                user_type=User.MEMBER,
+                specializations=specializations,
+                is_staff=True,
+            ),
+        ]
+
+        for index, user in enumerate(self._iter_unique_users(users)):
+            start = index % max(len(skills), 1)
+            rotated_skills = skills[start:] + skills[:start]
+            self._ensure_user_skills(user, rotated_skills[:5])
+        return users
+
+    def _ensure_user_cohort(
+        self,
+        *,
+        prefix,
+        count,
+        password,
+        user_type,
+        specializations,
+        is_staff=False,
+    ):
+        cohort = []
+        for index in range(1, count + 1):
+            cohort.append(
+                self._ensure_user(
+                    email=f"{prefix}.{index:03d}@{DEMO_EMAIL_DOMAIN}",
+                    first_name=f"Demo{index:03d}",
+                    last_name=prefix.capitalize(),
+                    password=password,
+                    user_type=user_type,
+                    specialization=specializations[index % len(specializations)],
+                    is_staff=is_staff,
+                )
+            )
+        return cohort
+
+    def _iter_unique_users(self, users):
+        seen = set()
+        for value in users.values():
+            values = value if isinstance(value, list) else [value]
+            for user in values:
+                if not hasattr(user, "id") or user.id in seen:
+                    continue
+                seen.add(user.id)
+                yield user
+
+    def _login_account_items(self, users):
+        labels = (
+            "admin",
+            "staff",
+            "organizer",
+            "organizer_pending",
+            "organizer_rejected",
+            "organizer_unverified",
+            "expert",
+            "expert_product",
+            "participant",
+            "teammate",
+        )
+        return [(label, users[label]) for label in labels]
+
+    def _ensure_user(
+        self,
+        *,
+        email,
+        first_name,
+        last_name,
+        password,
+        user_type,
+        specialization,
+        is_staff=False,
+        is_superuser=False,
+    ):
         user = User.objects.filter(email=email).first()
         if user is None:
-            user = User.objects.create_user(email=email, password=password, **defaults)
-        else:
-            for field, value in defaults.items():
-                setattr(user, field, value)
-            user.set_password(password)
-            user.save()
+            user = User(email=email)
 
-        self._ensure_role_profile(user, rnd)
-        self._ensure_user_details(user, index, rnd, skills)
+        user.first_name = first_name
+        user.last_name = last_name
+        user.birthday = date(1998, 1, 1)
+        user.city = "Москва"
+        user.region = "Москва"
+        user.about_me = (
+            "Демо-профиль для Selectel pre-prod стенда автономных "
+            "кейс-чемпионатов PROCOLLAB."
+        )
+        user.status = "Готов к демо-сценарию"
+        user.user_type = user_type
+        user.v2_speciality = specialization
+        user.speciality = specialization.name
+        user.onboarding_stage = None
+        user.is_active = True
+        user.is_staff = is_staff
+        user.is_superuser = is_superuser
+        user.set_password(password)
+        user.save()
+
+        UserNotificationPreferences.objects.get_or_create(user=user)
+        if user_type == User.EXPERT:
+            Expert.objects.get_or_create(
+                user=user,
+                defaults={
+                    "preferred_industries": "EdTech, AI, Smart City",
+                    "useful_to_project": "Оценка продуктовой гипотезы и архитектуры.",
+                },
+            )
+        else:
+            Member.objects.get_or_create(user=user)
         return user
 
-    def _get_user_type(self, index):
-        cycle = [
-            User.MEMBER,
-            User.MEMBER,
-            User.MENTOR,
-            User.EXPERT,
-            User.INVESTOR,
-        ]
-        return cycle[(index - 1) % len(cycle)]
-
-    def _birthday_for(self, index):
-        year = 1985 + (index % 18)
-        month = index % 12 + 1
-        day = min(index % 27 + 1, 28)
-        return date(year, month, day)
-
-    def _user_about(self, first_name, speciality):
-        return (
-            f"{first_name} развивает проекты на стыке технологий и реальных "
-            f"пользовательских задач. Основная специализация: {speciality}."
-        )
-
-    def _ensure_role_profile(self, user, rnd):
-        role_defaults = {
-            "useful_to_project": rnd.choice(
-                [
-                    "Поможет проверить гипотезы, собрать обратную связь и оформить MVP.",
-                    "Готов подключиться к разработке, аналитике и упаковке продукта.",
-                    "Может провести экспертную сессию и помочь с дорожной картой.",
-                ]
-            )
-        }
-
-        if user.user_type == User.MEMBER:
-            profile = self._get_or_create(Member, user=user)
-            profile.useful_to_project = role_defaults["useful_to_project"]
-        elif user.user_type == User.MENTOR:
-            profile = self._get_or_create(Mentor, user=user)
-            profile.preferred_industries = ", ".join(rnd.sample(INDUSTRIES, 3))
-            profile.useful_to_project = role_defaults["useful_to_project"]
-            profile.first_additional_role = User.EXPERT
-            profile.second_additional_role = User.INVESTOR
-        elif user.user_type == User.EXPERT:
-            profile = self._get_or_create(Expert, user=user)
-            profile.preferred_industries = ", ".join(rnd.sample(INDUSTRIES, 3))
-            profile.useful_to_project = role_defaults["useful_to_project"]
-            profile.first_additional_role = User.MENTOR
-            profile.second_additional_role = User.INVESTOR
-        else:
-            profile = self._get_or_create(Investor, user=user)
-            profile.preferred_industries = ", ".join(rnd.sample(INDUSTRIES, 3))
-            profile.interaction_process_description = (
-                "Смотрит на команды с понятной проблемой, первыми метриками "
-                "и готовностью быстро проверять партнерские гипотезы."
-            )
-            profile.first_additional_role = User.MENTOR
-            profile.second_additional_role = User.EXPERT
-        profile.save()
-        UserNotificationPreferences.objects.get_or_create(user=user)
-
-    def _ensure_user_details(self, user, index, rnd, skills):
-        user_content_type = ContentType.objects.get_for_model(User)
-        for skill in rnd.sample(skills, k=min(5, len(skills))):
-            SkillToObject.objects.get_or_create(
+    def _ensure_user_skills(self, user, skills):
+        content_type = ContentType.objects.get_for_model(User)
+        for skill in skills:
+            exists = SkillToObject.objects.filter(
+                content_type=content_type,
+                object_id=user.id,
                 skill=skill,
-                content_type=user_content_type,
-                object_id=user.pk,
-            )
+            ).exists()
+            if not exists:
+                SkillToObject.objects.create(
+                    content_type=content_type,
+                    object_id=user.id,
+                    skill=skill,
+                )
 
-        self._upsert_user_education(user, index)
-        self._upsert_user_work(user, index)
-        self._upsert_user_languages(user, rnd)
-        self._upsert_user_achievements(user, index, rnd)
-
-        UserLink.objects.get_or_create(
-            user=user,
-            link=f"https://portfolio.example.com/procollab/demo-user-{index:03d}",
-        )
-        UserLink.objects.get_or_create(
-            user=user,
-            link=f"https://github.com/procollab-demo-user-{index:03d}",
-        )
-
-        score = user.calculate_ordering_score()
-        User.objects.filter(pk=user.pk).update(
-            ordering_score=score,
-            dataset_migration_applied=True,
-        )
-
-    def _upsert_user_education(self, user, index):
-        obj = UserEducation.objects.filter(
-            user=user,
-            organization_name="Московский Политех",
-        ).first()
-        defaults = {
-            "education_level": user_constants.UserEducationLevels.HIGHER_BACALAVR.value,
-            "education_status": user_constants.UserEducationStatuses.STUDENT.value,
-            "description": "Проектная деятельность и цифровые продукты",
-            "entry_year": 2020 + index % 4,
-            "completion_year": 2024 + index % 4,
+    def _ensure_companies(self):
+        return {
+            "verified": self._upsert_first(
+                Company,
+                {"inn": "7707083893"},
+                {"name": 'ООО "Цифровые городские решения"'},
+            ),
+            "pending": self._upsert_first(
+                Company,
+                {"inn": "7802870820"},
+                {"name": 'ООО "Образовательные лаборатории"'},
+            ),
+            "rejected": self._upsert_first(
+                Company,
+                {"inn": "7714783093"},
+                {"name": 'ООО "Креативные индустрии"'},
+            ),
+            "unverified": self._upsert_first(
+                Company,
+                {"inn": "5406567890"},
+                {"name": 'ООО "Робототехника кампуса"'},
+            ),
         }
-        if obj is None:
-            UserEducation.objects.create(
-                user=user,
-                organization_name="Московский Политех",
-                **defaults,
-            )
-            return
-        for field, value in defaults.items():
-            setattr(obj, field, value)
-        obj.save()
 
-    def _upsert_user_work(self, user, index):
-        obj = UserWorkExperience.objects.filter(
-            user=user,
-            organization_name="Проектная лаборатория PROCOLLAB",
+    def _ensure_demo_file(self, owner):
+        existing = UserFile.objects.filter(
+            user=owner,
+            name="selectel-demo-championship-rules",
+            extension="txt",
         ).first()
-        defaults = {
-            "job_position": PROJECT_ROLES[index % len(PROJECT_ROLES)],
-            "description": "Работа с прототипами, исследованиями и презентациями.",
-            "entry_year": 2022,
-            "completion_year": timezone.localdate().year,
-        }
-        if obj is None:
-            UserWorkExperience.objects.create(
-                user=user,
-                organization_name="Проектная лаборатория PROCOLLAB",
-                **defaults,
-            )
-            return
-        for field, value in defaults.items():
-            setattr(obj, field, value)
-        obj.save()
+        if existing:
+            return existing
 
-    def _upsert_user_languages(self, user, rnd):
-        base_languages = [
-            user_constants.UserLanguagesEnum.RUSSIAN.value,
-            user_constants.UserLanguagesEnum.ENGLISH.value,
-        ]
-        extra_languages = [
-            user_constants.UserLanguagesEnum.GERMAN.value,
-            user_constants.UserLanguagesEnum.FRENCH.value,
-            user_constants.UserLanguagesEnum.CHINESE.value,
-        ]
-        levels = [level.value for level in user_constants.UserLanguagesLevels]
-
-        for language in base_languages + rnd.sample(extra_languages, 1):
-            UserLanguages.objects.get_or_create(
-                user=user,
-                language=language,
-                defaults={"language_level": rnd.choice(levels)},
-            )
-
-    def _upsert_user_achievements(self, user, index, rnd):
-        title, status = rnd.choice(ACHIEVEMENTS)
-        UserAchievement.objects.get_or_create(
-            user=user,
-            title=f"{title} #{index:03d}",
-            year=2022 + index % 4,
-            defaults={"status": status},
+        content = ContentFile(
+            (
+                "PROCOLLAB Selectel pre-prod demo material\n\n"
+                "This file is generated by seed_demo_data and saved through "
+                "the configured FILE_STORAGE backend. It is safe demo content "
+                "for checking local media delivery under /media/uploads/.\n"
+            ).encode("utf-8"),
+            name="selectel-demo-championship-rules.txt",
+        )
+        uploaded = SimpleUploadedFile(
+            content.name,
+            content.read(),
+            content_type="text/plain",
+        )
+        file_info = CDN(get_default_storage()).upload(
+            uploaded,
+            owner,
+            preserve_original=True,
+        )
+        return UserFile.objects.create(
+            link=file_info.url,
+            user=owner,
+            name=file_info.name,
+            extension=file_info.extension,
+            mime_type=file_info.mime_type,
+            size=file_info.size,
         )
 
-    def _create_project(self, index, rnd, users, industries, skills):
-        topic_name, topic_description = PROJECT_TOPICS[(index - 1) % len(PROJECT_TOPICS)]
-        leader = users[(index - 1) % len(users)]
-        industry = industries[(index - 1) % len(industries)]
-        name = f"{topic_name} #{index:02d}"
+    def _ensure_programs(self, users, companies, demo_file):
+        programs = {}
+        expert_profiles = [user.expert for user in users["expert_pool"][:4]]
+        for program_data in PROGRAMS:
+            manager = users[program_data.get("manager", "organizer")]
+            company = companies[program_data.get("company", "verified")]
+            program = self._ensure_program(
+                program_data=program_data,
+                manager=manager,
+                company=company,
+            )
+            program.managers.set([manager])
+            program.experts.set(expert_profiles)
+            for expert_profile in expert_profiles:
+                expert_profile.programs.add(program)
+            self._ensure_program_fields(program)
+            self._ensure_program_materials(program, demo_file)
+            if program.presentation_address != demo_file.link:
+                program.presentation_address = demo_file.link
+                program.save(update_fields=["presentation_address", "datetime_updated"])
+            self._ensure_program_criteria(program)
+            self._ensure_program_legal_settings(program, manager, demo_file)
+            self._ensure_verification_request(
+                program,
+                users,
+                company,
+                demo_file,
+                manager=manager,
+            )
+            self._ensure_moderation_log(program, users["admin"])
+            if program.is_private:
+                self._ensure_invite(program, users)
+            program.readiness = program.calculate_readiness()
+            program.save(update_fields=["readiness", "datetime_updated"])
+            programs[program.tag] = program
+        return programs
+
+    def _ensure_program(self, *, program_data, manager, company):
+        now = timezone.now()
+        started = now + timedelta(days=program_data["offset"])
+        registration_ends = started + timedelta(days=21)
+        submission_ends = registration_ends + timedelta(days=14)
+        evaluation_ends = submission_ends + timedelta(days=14)
+        finished = evaluation_ends + timedelta(days=7)
+        status = program_data["status"]
 
         defaults = {
-            "description": (
-                f"{topic_name} — {topic_description}. Команда проверяет спрос, "
-                "готовит пилот и собирает обратную связь от первых пользователей."
-            ),
-            "region": REGIONS[index % len(REGIONS)][0],
-            "hidden_score": rnd.randint(60, 100),
-            "actuality": (
-                "Проект помогает быстрее находить работающие решения и снижает "
-                "стоимость проверки гипотез для команды и партнеров."
-            ),
-            "target_audience": rnd.choice(
-                [
-                    "студенты, проектные команды и наставники",
-                    "университетские лаборатории и индустриальные партнеры",
-                    "городские сервисы, НКО и локальные сообщества",
-                    "малые команды, которым нужен быстрый запуск пилота",
-                ]
-            ),
-            "implementation_deadline": timezone.localdate()
-            + timedelta(days=60 + index * 7),
-            "problem": (
-                "Пользователям сложно быстро собрать данные, проверить гипотезу "
-                "и увидеть понятный результат без лишней ручной работы."
-            ),
-            "trl": rnd.randint(3, 8),
-            "industry": industry,
-            "presentation_address": (
-                f"https://docs.example.com/procollab/projects/{index:03d}/presentation"
-            ),
+            "name": program_data["name"],
+            "description": self._program_description(program_data["name"]),
+            "is_competitive": True,
+            "city": "Москва",
             "image_address": (
-                f"https://picsum.photos/seed/procollab-project-{index:03d}/480/480"
+                "https://picsum.photos/seed/"
+                f"{program_data['tag']}-avatar/640/640"
             ),
             "cover_image_address": (
-                f"https://picsum.photos/seed/procollab-cover-{index:03d}/1200/420"
+                "https://picsum.photos/seed/"
+                f"{program_data['tag']}-cover/1280/480"
             ),
-            "leader": leader,
-            "draft": False,
-            "is_company": index % 5 == 0,
-            "is_public": True,
+            "advertisement_image_address": (
+                "https://picsum.photos/seed/"
+                f"{program_data['tag']}-ad/1080/540"
+            ),
+            "presentation_address": "https://procollab.pro/media/demo/pitch-template.pdf",
+            "registration_link": "",
+            "max_project_rates": 1,
+            "is_distributed_evaluation": False,
+            "data_schema": {
+                "team_role": {"type": "select"},
+                "track": {"type": "select"},
+                "motivation": {"type": "textarea"},
+            },
+            "draft": status == PartnerProgram.STATUS_DRAFT,
+            "status": status,
+            "verification_status": program_data["verification_status"],
+            "is_private": program_data["is_private"],
+            "projects_availability": "all_users",
+            "publish_projects_after_finish": True,
+            "participation_format": program_data.get(
+                "participation_format",
+                PartnerProgram.PARTICIPATION_FORMAT_TEAM,
+            ),
+            "project_team_min_size": program_data.get("team_min", 2),
+            "project_team_max_size": program_data.get("team_max", 4),
+            "company": company,
+            "datetime_started": started,
+            "datetime_registration_ends": registration_ends,
+            "datetime_project_submission_ends": submission_ends,
+            "datetime_evaluation_ends": evaluation_ends,
+            "datetime_finished": finished,
+            "frozen_at": None,
         }
-
-        project = Project.objects.filter(name=name).first()
-        if project is None:
-            project = Project.objects.create(name=name, **defaults)
-        else:
-            for field, value in defaults.items():
-                setattr(project, field, value)
-            project.save()
-
-        self._ensure_project_details(project, index, rnd, users, skills)
-        return project
-
-    def _ensure_project_details(self, project, index, rnd, users, skills):
-        project_content_type = ContentType.objects.get_for_model(Project)
-        for skill in rnd.sample(skills, k=min(5, len(skills))):
-            SkillToObject.objects.get_or_create(
-                skill=skill,
-                content_type=project_content_type,
-                object_id=project.pk,
-            )
-
-        ProjectLink.objects.get_or_create(
-            project=project,
-            link=f"https://demo.example.com/projects/{project.pk}",
-        )
-        ProjectLink.objects.get_or_create(
-            project=project,
-            link=f"https://github.com/procollab-demo/project-{index:03d}",
+        return self._upsert_first(
+            PartnerProgram,
+            {"tag": program_data["tag"]},
+            defaults,
         )
 
-        for title, status in rnd.sample(ACHIEVEMENTS, k=2):
-            Achievement.objects.get_or_create(
-                project=project,
-                title=f"{title} проекта {index:02d}",
-                defaults={"status": status},
-            )
+    def _program_description(self, name):
+        return (
+            f"{name} — демонстрационный кейс-чемпионат PROCOLLAB для защиты "
+            "дипломного сценария. Участники собирают команду, регистрируют "
+            "проект, заполняют дополнительные поля, прикладывают материалы и "
+            "отправляют решение на экспертную оценку. Организатор видит "
+            "состояния модерации, готовность программы, материалы, критерии, "
+            "экспертов и отправленные проекты. Описание специально длиннее "
+            "минимального порога, чтобы readiness-проверка базовой информации "
+            "считалась выполненной на pre-prod стенде."
+        )
 
-        collaborators = rnd.sample(users, k=min(len(users), rnd.randint(3, 6)))
-        if project.leader not in collaborators:
-            collaborators[0] = project.leader
-        program_link = project.program_links.select_related("partner_program").first()
-        for user in collaborators:
-            if program_link:
-                self._upsert_program_profile(
-                    program=program_link.partner_program,
-                    user=user,
-                    project=project if user == project.leader else None,
-                )
-            Collaborator.objects.get_or_create(
-                project=project,
-                user=user,
-                defaults={
-                    "role": rnd.choice(PROJECT_ROLES),
-                    "specialization": user.speciality,
+    def _ensure_program_fields(self, program):
+        for field_data in PROGRAM_FIELDS:
+            self._upsert_first(
+                PartnerProgramField,
+                {"partner_program": program, "name": field_data["name"]},
+                {
+                    "label": field_data["label"],
+                    "field_type": field_data["field_type"],
+                    "is_required": field_data["is_required"],
+                    "help_text": field_data["help_text"],
+                    "show_filter": field_data["show_filter"],
+                    "options": field_data["options"],
                 },
             )
 
-        project.subscribers.set(rnd.sample(users, k=min(len(users), rnd.randint(4, 10))))
+    def _ensure_program_materials(self, program, demo_file):
+        self._upsert_first(
+            PartnerProgramMaterial,
+            {"program": program, "title": "Регламент демо-чемпионата"},
+            {"file": demo_file, "url": demo_file.link},
+        )
+        self._upsert_first(
+            PartnerProgramMaterial,
+            {"program": program, "title": "Шаблон презентации проекта"},
+            {"file": demo_file, "url": demo_file.link},
+        )
 
-        for goal_index in range(1, 4):
-            title = self._project_goal_title(goal_index)
-            goal = ProjectGoal.objects.filter(project=project, title=title).first()
-            defaults = {
-                "completion_date": timezone.localdate()
-                + timedelta(days=goal_index * 21 + index),
-                "responsible": rnd.choice(collaborators),
-                "is_done": goal_index == 1 and index % 2 == 0,
-            }
-            if goal is None:
-                ProjectGoal.objects.create(project=project, title=title, **defaults)
-            else:
-                for field, value in defaults.items():
-                    setattr(goal, field, value)
-                goal.save()
+    def _ensure_program_criteria(self, program):
+        for criterion_data in PROGRAM_CRITERIA:
+            self._upsert_first(
+                Criteria,
+                {"partner_program": program, "name": criterion_data["name"]},
+                {
+                    "description": criterion_data["description"],
+                    "type": criterion_data["type"],
+                    "min_value": criterion_data["min_value"],
+                    "max_value": criterion_data["max_value"],
+                    "weight": criterion_data["weight"],
+                },
+            )
 
-        company = self._ensure_company(index)
-        ProjectCompany.objects.get_or_create(
-            project=project,
-            company=company,
+    def _ensure_program_legal_settings(self, program, organizer, demo_file):
+        legal_settings, _ = PartnerProgramLegalSettings.objects.update_or_create(
+            program=program,
             defaults={
-                "contribution": "Экспертиза, пилотная площадка и обратная связь.",
-                "decision_maker": project.leader,
+                "participation_rules_file": demo_file,
+                "participation_rules_link": "",
+                "additional_terms_text": (
+                    "Демо-условия участия для pre-prod стенда. Не являются "
+                    "публичной офертой и используются только для показа ВКР."
+                ),
+                "organizer_terms_accepted_by": organizer,
+                "organizer_terms_accepted_at": timezone.now(),
+                "organizer_terms_version": DEMO_VERSION,
             },
         )
-        for resource_type in [
-            Resource.ResourceType.STAFF,
-            Resource.ResourceType.INFORMATION,
-        ]:
-            Resource.objects.get_or_create(
-                project=project,
-                type=resource_type,
-                defaults={
-                    "description": self._resource_description(resource_type),
-                    "partner_company": company,
+        for document_type, title in (
+            (LegalDocument.TYPE_PRIVACY_POLICY, "Демо-политика обработки данных"),
+            (LegalDocument.TYPE_PARTICIPANT_CONSENT, "Демо-согласие участника"),
+            (LegalDocument.TYPE_PARTICIPATION_TERMS, "Демо-правила участия"),
+            (LegalDocument.TYPE_ORGANIZER_TERMS, "Демо-условия организатора"),
+        ):
+            self._upsert_first(
+                LegalDocument,
+                {"type": document_type, "version": DEMO_VERSION},
+                {
+                    "title": title,
+                    "content_url": demo_file.link,
+                    "content_html": "",
+                    "is_active": True,
                 },
             )
+        return legal_settings
 
-        self._add_reactions(project, users, rnd)
-
-    def _project_goal_title(self, index):
-        return {
-            1: "Собрать обратную связь по прототипу",
-            2: "Подготовить демонстрацию для партнеров",
-            3: "Запустить пилот и зафиксировать метрики",
-        }[index]
-
-    def _ensure_company(self, index):
-        inn = f"7701{index:06d}"
-        company = Company.objects.filter(inn=inn).first()
-        if company is None:
-            return Company.objects.create(
-                inn=inn,
-                name=f"Демо-партнер {index:02d}",
-            )
-        company.name = f"Демо-партнер {index:02d}"
-        company.save()
-        return company
-
-    def _resource_description(self, resource_type):
-        descriptions = {
-            Resource.ResourceType.STAFF: "Нужны участники для разработки и аналитики.",
-            Resource.ResourceType.INFORMATION: "Нужны данные, интервью и экспертные материалы.",
+    def _ensure_verification_request(self, program, users, company, demo_file, manager):
+        status_map = {
+            PartnerProgram.VERIFICATION_STATUS_PENDING: (
+                PartnerProgramVerificationRequest.STATUS_PENDING,
+                None,
+                "",
+            ),
+            PartnerProgram.VERIFICATION_STATUS_VERIFIED: (
+                PartnerProgramVerificationRequest.STATUS_APPROVED,
+                users["admin"],
+                "Компания подтверждена для демо-стенда.",
+            ),
+            PartnerProgram.VERIFICATION_STATUS_REJECTED: (
+                PartnerProgramVerificationRequest.STATUS_REJECTED,
+                users["admin"],
+                "Демо-пример заявки на доработку.",
+            ),
         }
-        return descriptions[resource_type]
-
-    def _create_program(self, index, rnd, users, projects):
-        name, tag, description = self._program_seed_data(index)
-        status = self._program_status(index)
-        fill_level = self._program_fill_level(index)
-        dates = self._program_dates(index, status)
-        now = timezone.now()
-        company = self._ensure_company(index + 100)
-        defaults = {
-            "tag": tag,
-            "description": description if fill_level != "minimal" else "",
-            "is_competitive": index % 2 == 1,
-            "city": REGIONS[index % len(REGIONS)][1],
-            "image_address": self._program_image(index, fill_level, "program"),
-            "cover_image_address": self._program_image(index, fill_level, "cover"),
-            "advertisement_image_address": self._program_image(index, fill_level, "ad"),
-            "mobile_cover_image_address": self._program_image(
-                index,
-                fill_level,
-                "mobile",
-            ),
-            "presentation_address": (
-                f"https://docs.example.com/procollab/programs/{index:03d}/presentation"
-                if fill_level in {"partial", "full"}
-                else None
-            ),
-            "registration_link": (
-                f"https://demo.example.com/programs/{tag.lower()}/registration"
-                if fill_level == "full"
-                else None
-            ),
-            "max_project_rates": 2,
-            "is_distributed_evaluation": index % 2 == 1,
-            "draft": status == "draft",
-            "status": status,
-            "frozen_at": now - timedelta(days=index) if status == "frozen" else None,
-            "verification_status": self._program_verification_status(status),
-            "company": company if fill_level != "minimal" else None,
-            "projects_availability": "all_users",
-            "publish_projects_after_finish": index % 2 == 0,
-            **dates,
-            "readiness": {},
-            "sent_reminders": [],
-        }
-
-        program = PartnerProgram.objects.filter(tag=tag).first()
-        if program is None:
-            program = PartnerProgram.objects.create(name=name, **defaults)
-        else:
-            program.name = name
-            for field, value in defaults.items():
-                setattr(program, field, value)
-            self._save_program_without_completion_tasks(program)
-
-        self._ensure_program_details(
-            program,
-            index,
-            rnd,
-            users,
-            projects,
-            fill_level,
+        request_status, decided_by, admin_comment = status_map.get(
+            program.verification_status,
+            (None, None, ""),
         )
-        return program
-
-    def _program_seed_data(self, index):
-        base_name, base_tag, base_description = PROGRAM_TOPICS[
-            (index - 1) % len(PROGRAM_TOPICS)
-        ]
-        cycle_number = (index - 1) // len(PROGRAM_TOPICS)
-        if cycle_number == 0:
-            return base_name, base_tag, base_description
-
-        suffix = cycle_number + 1
-        return (
-            f"{base_name} #{suffix:02d}",
-            f"{base_tag}-{suffix:02d}",
-            (
-                f"{base_description} Дополнительный набор #{suffix:02d} "
-                "с отдельными участниками, проектами и этапами отбора."
-            ),
-        )
-
-    def _program_status(self, index):
-        return PROGRAM_STATUS_CYCLE[(index - 1) % len(PROGRAM_STATUS_CYCLE)]
-
-    def _program_fill_level(self, index):
-        return PROGRAM_FILL_LEVEL_CYCLE[(index - 1) % len(PROGRAM_FILL_LEVEL_CYCLE)]
-
-    def _program_verification_status(self, status):
-        return {
-            "draft": "not_requested",
-            "pending_moderation": "pending",
-            "published": "verified",
-            "rejected": "rejected",
-            "completed": "verified",
-            "frozen": "verified",
-            "archived": "revoked",
-        }[status]
-
-    def _program_dates(self, index, status):
-        now = timezone.now()
-        if status in {"completed", "archived"}:
-            return {
-                "datetime_started": now - timedelta(days=120 + index),
-                "datetime_registration_ends": now - timedelta(days=90 + index),
-                "datetime_project_submission_ends": now - timedelta(days=75 + index),
-                "datetime_evaluation_ends": now - timedelta(days=50 + index),
-                "datetime_finished": now - timedelta(days=20 + index),
-            }
-
-        return {
-            "datetime_started": now - timedelta(days=7 + index),
-            "datetime_registration_ends": now + timedelta(days=20 + index * 2),
-            "datetime_project_submission_ends": now + timedelta(days=30 + index * 2),
-            "datetime_evaluation_ends": now + timedelta(days=45 + index * 2),
-            "datetime_finished": now + timedelta(days=60 + index * 2),
-        }
-
-    def _program_image(self, index, fill_level, image_type):
-        if fill_level == "minimal":
-            return None
-        if fill_level == "partial" and image_type in {"ad", "mobile"}:
+        if request_status is None:
             return None
 
-        sizes = {
-            "program": "480/480",
-            "cover": "1200/420",
-            "ad": "1080/540",
-            "mobile": "640/900",
-        }
-        return (
-            f"https://picsum.photos/seed/procollab-program-{image_type}-"
-            f"{index:03d}/{sizes[image_type]}"
-        )
-
-    def _ensure_program_details(self, program, index, rnd, users, projects, fill_level):
-        managers = [users[(index - 1) % len(users)]]
-        managers.extend(users[index : index + 2])
-        program.managers.set(managers[: 1 if fill_level == "minimal" else 3])
-
-        fields = self._ensure_program_fields(program, fill_level)
-        self._ensure_program_materials(program, index, fill_level)
-        self._ensure_program_criteria(program, fill_level)
-
-        expert_profiles = list(
-            Expert.objects.filter(user__in=users).select_related("user").order_by("id")
-        )
-        selected_experts = []
-        if expert_profiles and fill_level != "minimal":
-            experts_count = 1 if fill_level == "partial" else 3
-            selected_experts = expert_profiles[: min(experts_count, len(expert_profiles))]
-            program.experts.set(selected_experts)
-        else:
-            program.experts.clear()
-            ProjectExpertAssignment.objects.filter(partner_program=program).delete()
-            ProjectScore.objects.filter(criteria__partner_program=program).delete()
-
-        if not program.is_competitive:
-            ProjectExpertAssignment.objects.filter(partner_program=program).delete()
-            ProjectScore.objects.filter(criteria__partner_program=program).delete()
-
-        participant_count = {
-            "minimal": 2,
-            "partial": 6 + index % 4,
-            "full": 10 + index,
-        }[fill_level]
-        participant_count = min(len(users), participant_count)
-        participants = rnd.sample(users, k=participant_count)
-        program_projects = (
-            self._select_program_projects(index, projects)
-            if fill_level != "minimal"
-            else []
-        )
-        program_project_ids = {project.id for project in program_projects}
-        stale_project_ids = list(
-            program.program_projects.exclude(
-                project_id__in=program_project_ids
-            ).values_list("project_id", flat=True)
-        )
-        if stale_project_ids:
-            ProjectScore.objects.filter(
-                criteria__partner_program=program,
-                project_id__in=stale_project_ids,
-            ).delete()
-            ProjectExpertAssignment.objects.filter(
-                partner_program=program,
-                project_id__in=stale_project_ids,
-            ).delete()
-            program.program_projects.exclude(project_id__in=program_project_ids).delete()
-
-        for user in participants:
-            self._upsert_program_profile(program, user)
-
-        for project in program_projects:
-            self._upsert_program_profile(program, project.leader, project)
-            should_submit = program.is_competitive and project.id % 2 == 0
-            link, _ = PartnerProgramProject.objects.get_or_create(
-                partner_program=program,
-                project=project,
-                defaults={"submitted": False, "datetime_submitted": None},
-            )
-            if link.submitted:
-                link.submitted = False
-                link.datetime_submitted = None
-                link.save(update_fields=["submitted", "datetime_submitted"])
-            self._ensure_program_field_values(link, fields, rnd)
-            link.submitted = should_submit
-            link.datetime_submitted = (
-                timezone.now() - timedelta(days=project.id % 7) if should_submit else None
-            )
-            link.save(update_fields=["submitted", "datetime_submitted"])
-            self._ensure_program_project_scores(
-                program,
-                project,
-                selected_experts[:2],
-                rnd,
-            )
-
-        if fill_level != "minimal":
-            self._add_reactions(program, users, rnd)
-        program.readiness = program.calculate_readiness()
-        self._save_program_without_completion_tasks(program, update_fields=["readiness"])
-
-    def _save_program_without_completion_tasks(self, program, **kwargs):
-        from certificates.signals import generate_certificates_after_program_completion
-
-        disconnected = post_save.disconnect(
-            receiver=generate_certificates_after_program_completion,
-            sender=PartnerProgram,
-        )
-        try:
-            program.save(**kwargs)
-        finally:
-            if disconnected:
-                post_save.connect(
-                    receiver=generate_certificates_after_program_completion,
-                    sender=PartnerProgram,
-                )
-
-    def _select_program_projects(self, index, projects):
-        total_programs = max(getattr(self, "_programs_count", len(PROGRAM_TOPICS)), 1)
-        start = (index - 1) * len(projects) // total_programs
-        end = index * len(projects) // total_programs
-        return projects[start:end]
-
-    def _ensure_program_fields(self, program, fill_level):
-        field_names = {
-            "minimal": set(),
-            "partial": {"track", "stage"},
-            "full": {field["name"] for field in PROGRAM_FIELDS},
-        }[fill_level]
-        if not field_names:
-            program.fields.all().delete()
-            return []
-
-        program.fields.exclude(name__in=field_names).delete()
-        fields = []
-        for field_data in PROGRAM_FIELDS:
-            if field_data["name"] not in field_names:
-                continue
-            field = PartnerProgramField.objects.filter(
-                partner_program=program,
-                name=field_data["name"],
-            ).first()
-            if field is None:
-                field = PartnerProgramField.objects.create(
-                    partner_program=program,
-                    **field_data,
-                )
-            else:
-                for key, value in field_data.items():
-                    setattr(field, key, value)
-                field.save()
-            fields.append(field)
-        return fields
-
-    def _ensure_program_materials(self, program, index, fill_level):
-        materials = [
-            (
-                "Регламент программы",
-                f"https://docs.example.com/procollab/programs/{index:03d}/rules",
-            ),
-            (
-                "Шаблон презентации проекта",
-                f"https://docs.example.com/procollab/programs/{index:03d}/pitch-template",
-            ),
-        ]
-        if fill_level == "minimal":
-            program.materials.all().delete()
-            return
-        if fill_level == "partial":
-            materials = materials[:1]
-            program.materials.exclude(title=materials[0][0]).delete()
-
-        for title, url in materials:
-            material = PartnerProgramMaterial.objects.filter(
-                program=program,
-                title=title,
-            ).first()
-            if material is None:
-                PartnerProgramMaterial.objects.create(
-                    program=program,
-                    title=title,
-                    url=url,
-                )
-            else:
-                material.url = url
-                material.save()
-
-    def _ensure_program_criteria(self, program, fill_level):
-        if fill_level == "minimal":
-            Criteria.objects.filter(partner_program=program).exclude(
-                name="Комментарий"
-            ).delete()
-            self._delete_duplicate_program_criteria(program, {"Комментарий"})
-            return
-
-        criteria_seed = PROGRAM_CRITERIA if fill_level == "full" else PROGRAM_CRITERIA[:3]
-        expected_names = {name for name, _ in criteria_seed} | {"Комментарий"}
-        Criteria.objects.filter(partner_program=program).exclude(
-            name__in=expected_names
-        ).delete()
-
-        for name, description in criteria_seed:
-            criteria_type = "str" if name == "Комментарий" else "int"
-            defaults = {
-                "description": description,
-                "type": criteria_type,
-                "min_value": None if criteria_type == "str" else 1,
-                "max_value": None if criteria_type == "str" else 10,
-            }
-            criteria = Criteria.objects.filter(
-                partner_program=program,
-                name=name,
-            ).first()
-            if criteria is None:
-                Criteria.objects.create(partner_program=program, name=name, **defaults)
-            else:
-                for field, value in defaults.items():
-                    setattr(criteria, field, value)
-                criteria.save()
-
-        self._delete_duplicate_program_criteria(program, expected_names)
-
-    def _delete_duplicate_program_criteria(self, program, criteria_names):
-        for name in criteria_names:
-            criteria_for_name = Criteria.objects.filter(
-                partner_program=program,
-                name=name,
-            ).order_by("id")
-            keeper = criteria_for_name.first()
-            if keeper is None:
-                continue
-            duplicate_ids = list(
-                criteria_for_name.exclude(pk=keeper.pk).values_list("id", flat=True)
-            )
-            if duplicate_ids:
-                ProjectScore.objects.filter(criteria_id__in=duplicate_ids).delete()
-                Criteria.objects.filter(id__in=duplicate_ids).delete()
-
-    def _upsert_program_profile(self, program, user, project=None):
-        data = {
-            "email": user.email,
-            "region": user.region or "",
-            "city": user.city or "",
-            "education_type": "Университет",
-            "institution_name": "Московский Политех",
-            "class_course": user.study_group or "",
-            "motivation": "Хочу проверить проектную гипотезу и получить обратную связь.",
-        }
-        profile = PartnerProgramUserProfile.objects.filter(
-            partner_program=program,
-            user=user,
+        verification_request = PartnerProgramVerificationRequest.objects.filter(
+            program=program,
+            status=request_status,
         ).first()
-        if profile is None:
-            PartnerProgramUserProfile.objects.create(
-                partner_program=program,
-                user=user,
-                project=project,
-                partner_program_data=data,
-            )
-            return
-
-        profile.partner_program_data = data
-        if project is not None:
-            profile.project = project
-        profile.save()
-
-    def _ensure_program_field_values(self, program_project, fields, rnd):
-        option_values = {
-            "track": ["EdTech", "HealthTech", "UrbanTech", "GreenTech", "IndustrialTech"],
-            "stage": ["Идея", "Прототип", "MVP", "Пилот", "Первые продажи"],
-            "support_request": [
-                "Нужны консультации по рынку и первые контакты с партнерами.",
-                "Нужна помощь с метриками пилота и упаковкой презентации.",
-                "Нужна экспертная оценка архитектуры и пользовательского сценария.",
-            ],
+        defaults = {
+            "company": company,
+            "company_name": company.name,
+            "inn": company.inn,
+            "legal_name": company.name,
+            "ogrn": "1027700132195",
+            "website": "https://procollab.pro",
+            "region": "Москва",
+            "initiator": manager,
+            "contact_full_name": manager.get_full_name(),
+            "contact_position": "Руководитель образовательных программ",
+            "contact_email": manager.email,
+            "contact_phone": "+7 999 000-00-01",
+            "status": request_status,
+            "decided_at": timezone.now() if decided_by else None,
+            "decided_by": decided_by,
+            "admin_comment": admin_comment,
+            "rejection_reason": (
+                PartnerProgramVerificationRequest.REJECTION_OTHER
+                if request_status == PartnerProgramVerificationRequest.STATUS_REJECTED
+                else ""
+            ),
         }
-        for field in fields:
-            value = rnd.choice(option_values[field.name])
-            field_value = PartnerProgramFieldValue.objects.filter(
-                program_project=program_project,
-                field=field,
-            ).first()
-            if field_value is None:
-                PartnerProgramFieldValue.objects.create(
-                    program_project=program_project,
-                    field=field,
-                    value_text=value,
+        if verification_request is None:
+            verification_request = PartnerProgramVerificationRequest.objects.create(
+                program=program,
+                **defaults,
+            )
+        else:
+            for field, value in defaults.items():
+                setattr(verification_request, field, value)
+            verification_request.save()
+        verification_request.documents.add(demo_file)
+        return verification_request
+
+    def _ensure_moderation_log(self, program, admin):
+        if program.status == PartnerProgram.STATUS_DRAFT:
+            return None
+
+        action_by_status = {
+            PartnerProgram.STATUS_PENDING_MODERATION: (
+                ModerationLog.ACTION_SUBMIT_TO_MODERATION,
+                PartnerProgram.STATUS_DRAFT,
+                PartnerProgram.STATUS_PENDING_MODERATION,
+                "Демо-чемпионат отправлен на модерацию.",
+                "",
+            ),
+            PartnerProgram.STATUS_PUBLISHED: (
+                ModerationLog.ACTION_APPROVE,
+                PartnerProgram.STATUS_PENDING_MODERATION,
+                PartnerProgram.STATUS_PUBLISHED,
+                "Демо-чемпионат одобрен для публикации.",
+                "",
+            ),
+            PartnerProgram.STATUS_REJECTED: (
+                ModerationLog.ACTION_REJECT,
+                PartnerProgram.STATUS_PENDING_MODERATION,
+                PartnerProgram.STATUS_REJECTED,
+                "Демо-чемпионат требует доработки материалов.",
+                ModerationLog.REJECTION_REASON_INSUFFICIENT_DATA,
+            ),
+        }
+        if program.status not in action_by_status:
+            return None
+        action, before, after, comment, rejection_reason = action_by_status[program.status]
+        log = ModerationLog.objects.filter(
+            program=program,
+            action=action,
+            status_after=after,
+        ).first()
+        if log:
+            log.status_before = before
+            log.comment = comment
+            log.rejection_reason = rejection_reason
+            log.save()
+            return log
+        return ModerationLog.objects.create(
+            program=program,
+            author=admin,
+            action=action,
+            status_before=before,
+            status_after=after,
+            comment=comment,
+            rejection_reason=rejection_reason,
+        )
+
+    def _ensure_invite(self, program, users):
+        invite = PartnerProgramInvite.objects.filter(
+            program=program,
+            email=users["participant"].email,
+        ).first()
+        if invite is None:
+            invite = PartnerProgramInvite.objects.create(
+                program=program,
+                email=users["participant"].email,
+                status=PartnerProgramInvite.STATUS_PENDING,
+                created_by=users["organizer"],
+                expires_at=timezone.now() + timedelta(days=30),
+            )
+        else:
+            invite.status = PartnerProgramInvite.STATUS_PENDING
+            invite.created_by = users["organizer"]
+            invite.expires_at = timezone.now() + timedelta(days=30)
+            invite.save()
+        return invite
+
+    def _ensure_project_submission(self, *, program, users, company, industry):
+        project = self._upsert_first(
+            Project,
+            {"name": "Demo Smart Campus Assistant", "leader": users["participant"]},
+            {
+                "description": (
+                    "Проект команды участника для демо кейс-чемпионата: сервис "
+                    "помогает студентам находить аудитории, события, дедлайны и "
+                    "партнерские возможности на кампусе."
+                ),
+                "region": "Москва",
+                "actuality": "Кампусные сервисы разрознены, студентам сложно быстро находить нужные действия.",
+                "target_audience": "Студенты, наставники и организаторы образовательных программ.",
+                "trl": 5,
+                "implementation_deadline": date.today() + timedelta(days=120),
+                "problem": "Нет единой точки доступа к событиям, дедлайнам и сервисам кампуса.",
+                "industry": industry,
+                "presentation_address": self._program_file_url(program),
+                "image_address": "https://picsum.photos/seed/demo-project-avatar/640/640",
+                "cover_image_address": "https://picsum.photos/seed/demo-project-cover/1280/480",
+                "draft": False,
+                "is_company": False,
+                "is_public": True,
+            },
+        )
+        self._upsert_first(
+            ProjectCompany,
+            {"project": project, "company": company},
+            {
+                "contribution": "Компания предоставляет кейс, экспертов и обратную связь.",
+                "decision_maker": users["organizer"],
+            },
+        )
+        self._upsert_first(
+            ProjectLink,
+            {"project": project, "link": "https://procollab.pro"},
+            {},
+        )
+
+        for user in (users["participant"], users["teammate"]):
+            self._ensure_program_profile(program, user, project)
+        self._ensure_participant_consent(program, users["participant"])
+
+        self._upsert_first(
+            Collaborator,
+            {"project": project, "user": users["teammate"]},
+            {
+                "role": "Frontend и UX",
+                "specialization": "UX/UI-дизайн и Angular",
+            },
+        )
+
+        program_project = PartnerProgramProject.objects.filter(
+            partner_program=program,
+            project=project,
+        ).first()
+        if program_project is None:
+            program_project = PartnerProgramProject.objects.create(
+                partner_program=program,
+                project=project,
+                submitted=False,
+                datetime_submitted=None,
+            )
+
+        if program_project.submitted:
+            program_project.submitted = False
+            program_project.datetime_submitted = None
+            program_project.save(update_fields=["submitted", "datetime_submitted"])
+
+        field_values = {
+            "track": "AI-сервисы",
+            "team_role": "MVP",
+            "motivation": (
+                "Команда хочет проверить, как автономные чемпионаты помогают "
+                "быстро собирать проекты вокруг реальных кейсов."
+            ),
+        }
+        for field in program.fields.all():
+            if field.name in field_values:
+                self._upsert_first(
+                    PartnerProgramFieldValue,
+                    {"program_project": program_project, "field": field},
+                    {"value_text": field_values[field.name]},
                 )
-            else:
-                field_value.value_text = value
-                field_value.save()
 
-    def _ensure_program_project_scores(self, program, project, experts, rnd):
-        if not program.is_competitive or not experts:
-            return
+        program_project.submitted = True
+        program_project.datetime_submitted = timezone.now() - timedelta(days=1)
+        program_project.save(update_fields=["submitted", "datetime_submitted"])
 
-        criteria = list(Criteria.objects.filter(partner_program=program).order_by("id"))
-        for expert in experts:
+        self._ensure_project_evaluation(program, program_project, users)
+        return program_project
+
+    def _ensure_project_cohort(self, *, programs, users, companies, industry):
+        candidate_programs = [
+            program
+            for program in programs.values()
+            if program.status
+            in (PartnerProgram.STATUS_PUBLISHED, PartnerProgram.STATUS_COMPLETED)
+        ]
+        participants = users["participant_pool"]
+        experts = users["expert_pool"]
+        company_values = list(companies.values())
+
+        for index in range(1, DEMO_PROJECT_COUNT + 1):
+            program = candidate_programs[(index - 1) % len(candidate_programs)]
+            leader = participants[(index - 1) % len(participants)]
+            teammate = participants[(index + 5) % len(participants)]
+            company = company_values[(index - 1) % len(company_values)]
+            project = self._upsert_first(
+                Project,
+                {"name": f"Demo Case Project {index:03d}", "leader": leader},
+                {
+                    "description": (
+                        "Расширенный демо-проект для наполнения Selectel pre-prod "
+                        "данными кейс-чемпионатов и проверки списков, карточек, "
+                        "оценок, уведомлений и кабинетов разных ролей."
+                    ),
+                    "region": "Москва",
+                    "actuality": (
+                        "Проект демонстрирует, как участники проходят полный "
+                        "цикл от регистрации до экспертной оценки."
+                    ),
+                    "target_audience": "Студенты, эксперты и организаторы программ.",
+                    "trl": (index % 8) + 1,
+                    "implementation_deadline": date.today()
+                    + timedelta(days=90 + index),
+                    "problem": "Нужно показать богатую базу данных для дипломной демонстрации.",
+                    "industry": industry,
+                    "presentation_address": self._program_file_url(program),
+                    "image_address": (
+                        f"https://picsum.photos/seed/demo-case-{index:03d}/640/640"
+                    ),
+                    "cover_image_address": (
+                        f"https://picsum.photos/seed/demo-case-cover-{index:03d}/1280/480"
+                    ),
+                    "draft": False,
+                    "is_company": False,
+                    "is_public": True,
+                },
+            )
+            self._upsert_first(
+                ProjectCompany,
+                {"project": project, "company": company},
+                {
+                    "contribution": "Демо-партнерство для проверки карточки проекта.",
+                    "decision_maker": users["organizer"],
+                },
+            )
+            self._upsert_first(
+                ProjectLink,
+                {"project": project, "link": f"https://procollab.pro/demo/{index:03d}"},
+                {},
+            )
+
+            self._ensure_program_profile(program, leader, project)
+            self._ensure_participant_consent(program, leader)
             if (
-                ProjectExpertAssignment.objects.filter(
-                    partner_program=program,
-                    project=project,
-                ).count()
-                < program.max_project_rates
+                program.participation_format
+                == PartnerProgram.PARTICIPATION_FORMAT_TEAM
             ):
-                ProjectExpertAssignment.objects.get_or_create(
+                self._ensure_program_profile(program, teammate, project)
+                self._ensure_participant_consent(program, teammate)
+                self._upsert_first(
+                    Collaborator,
+                    {"project": project, "user": teammate},
+                    {
+                        "role": "Demo teammate",
+                        "specialization": "Product and frontend",
+                    },
+                )
+
+            program_project = PartnerProgramProject.objects.filter(
+                partner_program=program,
+                project=project,
+            ).first()
+            if program_project is None:
+                program_project = PartnerProgramProject.objects.create(
                     partner_program=program,
                     project=project,
-                    expert=expert,
+                    submitted=False,
+                    datetime_submitted=None,
                 )
+            if program_project.submitted:
+                program_project.submitted = False
+                program_project.datetime_submitted = None
+                program_project.save(update_fields=["submitted", "datetime_submitted"])
 
-            for criterion in criteria:
-                if criterion.type == "str":
-                    value = rnd.choice(
-                        [
-                            "Хорошая база, стоит точнее описать метрики пилота.",
-                            "Команда выглядит сильной, нужен фокус на одном сценарии.",
-                            "Рекомендуется усилить описание целевой аудитории.",
-                        ]
+            for field in program.fields.all():
+                value = {
+                    "track": "AI-сервисы" if index % 2 else "Образование",
+                    "team_role": "MVP" if index % 3 else "Пилотирование",
+                    "motivation": (
+                        "Демо-команда участвует, чтобы проверить полный "
+                        "процесс кейс-чемпионата на pre-prod стенде."
+                    ),
+                }.get(field.name)
+                if value is not None:
+                    self._upsert_first(
+                        PartnerProgramFieldValue,
+                        {"program_project": program_project, "field": field},
+                        {"value_text": value},
                     )
-                else:
-                    value = str(rnd.randint(6, 10))
-                ProjectScore.objects.update_or_create(
-                    criteria=criterion,
-                    user=expert.user,
-                    project=project,
-                    defaults={"value": value},
-                )
 
-    def _create_user_news(self, users, news_per_user, rnd):
-        created_count = 0
-        for user_index, user in enumerate(users, start=1):
-            for news_index in range(news_per_user):
-                text = USER_NEWS[(user_index + news_index) % len(USER_NEWS)]
-                news, created = News.objects.get_or_create(
-                    content_type=ContentType.objects.get_for_model(User),
-                    object_id=user.pk,
-                    text=text,
-                    defaults={
-                        "datetime_created": timezone.now()
-                        - timedelta(days=user_index + news_index)
-                    },
-                )
-                created_count += int(created)
-                self._add_reactions(news, users, rnd)
-        return created_count
-
-    def _create_project_news(self, projects, news_per_project, rnd):
-        created_count = 0
-        for project_index, project in enumerate(projects, start=1):
-            for news_index in range(news_per_project):
-                text = PROJECT_NEWS[(project_index + news_index) % len(PROJECT_NEWS)]
-                news, created = News.objects.get_or_create(
-                    content_type=ContentType.objects.get_for_model(Project),
-                    object_id=project.pk,
-                    text=text,
-                    defaults={
-                        "datetime_created": timezone.now()
-                        - timedelta(hours=project_index * 4 + news_index)
-                    },
-                )
-                ProjectNews.objects.get_or_create(project=project, text=text)
-                created_count += int(created)
-                self._add_reactions(news, [project.leader], rnd)
-        return created_count
-
-    def _create_program_news(self, programs, rnd):
-        created_count = 0
-        for program_index, program in enumerate(programs, start=1):
-            users = list(program.users.all())
-            for news_index, text in enumerate(PROGRAM_NEWS):
-                news, created = News.objects.get_or_create(
-                    content_type=ContentType.objects.get_for_model(PartnerProgram),
-                    object_id=program.pk,
-                    text=text,
-                    defaults={
-                        "pin": news_index == 0,
-                        "datetime_created": timezone.now()
-                        - timedelta(hours=program_index * 3 + news_index),
-                    },
-                )
-                created_count += int(created)
-                self._add_reactions(news, users, rnd)
-        return created_count
-
-    def _add_reactions(self, obj, users, rnd):
-        if not users:
-            return
-        content_type = ContentType.objects.get_for_model(obj)
-        viewers = rnd.sample(users, k=min(len(users), rnd.randint(1, 8)))
-        fans = rnd.sample(viewers, k=min(len(viewers), rnd.randint(1, 4)))
-        for user in viewers:
-            View.objects.get_or_create(
-                user=user,
-                content_type=content_type,
-                object_id=obj.pk,
+            program_project.submitted = True
+            program_project.datetime_submitted = timezone.now() - timedelta(
+                days=index % 10
             )
-        for user in fans:
-            Like.objects.get_or_create(
-                user=user,
-                content_type=content_type,
-                object_id=obj.pk,
+            program_project.save(update_fields=["submitted", "datetime_submitted"])
+
+            expert_user = experts[(index - 1) % len(experts)]
+            self._ensure_project_evaluation(
+                program,
+                program_project,
+                users,
+                expert_user=expert_user,
             )
 
-    def _get_or_create(self, model, **lookup):
+    def _program_file_url(self, program):
+        material = (
+            program.materials.filter(file__isnull=False).select_related("file").first()
+        )
+        return material.file.link if material and material.file else "https://procollab.pro"
+
+    def _ensure_participant_consent(self, program, participant):
+        consent = PartnerProgramParticipantConsent.objects.filter(
+            program=program,
+            user=participant,
+            participation_terms_version=DEMO_VERSION,
+        ).first()
+        defaults = {
+            "consent_document_version": DEMO_VERSION,
+            "privacy_policy_version": DEMO_VERSION,
+            "consent_text_snapshot": (
+                "Демо-согласие участника на обработку персональных данных и "
+                "участие в кейс-чемпионате для Selectel pre-prod стенда."
+            ),
+            "ip_address": "127.0.0.1",
+            "user_agent": "seed_demo_data",
+        }
+        if consent is None:
+            return PartnerProgramParticipantConsent.objects.create(
+                program=program,
+                user=participant,
+                participation_terms_version=DEMO_VERSION,
+                **defaults,
+            )
+        for field, value in defaults.items():
+            setattr(consent, field, value)
+        consent.save()
+        return consent
+
+    def _ensure_program_profile(self, program, user, project=None):
+        return self._upsert_first(
+            PartnerProgramUserProfile,
+            {"partner_program": program, "user": user},
+            {
+                "project": project,
+                "partner_program_data": {
+                    "track": "AI-сервисы",
+                    "team_role": "MVP",
+                    "motivation": "Демо-регистрация для Selectel pre-prod стенда.",
+                },
+            },
+        )
+
+    def _ensure_project_evaluation(self, program, program_project, users, expert_user=None):
+        expert_user = expert_user or users["expert"]
+        expert_profile = expert_user.expert
+        expert_profile.programs.add(program)
+        self._upsert_first(
+            ProjectExpertAssignment,
+            {
+                "partner_program": program,
+                "project": program_project.project,
+                "expert": expert_profile,
+            },
+            {},
+        )
+
+        evaluation, _ = ProjectEvaluation.objects.update_or_create(
+            program_project=program_project,
+            user=expert_user,
+            defaults={
+                "status": ProjectEvaluation.STATUS_DRAFT,
+                "comment": (
+                    "Демо-оценка: у решения понятная проблема, хороший MVP и "
+                    "реалистичный план пилотирования."
+                ),
+            },
+        )
+        score_values = {
+            "Проблема и рынок": "8",
+            "Технологичность": "9",
+            "Пользовательский опыт": "8",
+            "Презентация": "9",
+        }
+        for criterion in Criteria.objects.filter(partner_program=program):
+            value = score_values.get(criterion.name, "8")
+            self._upsert_first(
+                ProjectEvaluationScore,
+                {"evaluation": evaluation, "criterion": criterion},
+                {"value": value},
+            )
+            self._upsert_first(
+                ProjectScore,
+                {
+                    "criteria": criterion,
+                    "user": expert_user,
+                    "project": program_project.project,
+                },
+                {"value": value},
+            )
+        evaluation.total_score = evaluation.calculate_total_score(require_complete=True)
+        evaluation.mark_submitted()
+        evaluation.save(update_fields=["status", "submitted_at", "total_score", "comment"])
+        return evaluation
+
+    def _ensure_notifications(self, programs, users):
+        self._ensure_notification(
+            recipient=users["organizer"],
+            notification_type=Notification.Type.PROGRAM_MODERATION_APPROVED,
+            title="Демо-чемпионат опубликован",
+            message="PROCOLLAB Smart Campus Challenge доступен на витрине.",
+            object_type="partner_program",
+            object_id=programs["demo-published-smart-campus"].id,
+            url="/office/program",
+            dedupe_key="demo-published-smart-campus-approved",
+        )
+        self._ensure_notification(
+            recipient=users["participant"],
+            notification_type=Notification.Type.PROGRAM_SUBMITTED_TO_MODERATION,
+            title="Проект принят на проверку",
+            message="Demo Smart Campus Assistant отправлен экспертам.",
+            object_type="partner_program_project",
+            object_id=programs["demo-published-smart-campus"].id,
+            url="/office/program",
+            dedupe_key="demo-project-submitted",
+        )
+        self._ensure_notification(
+            recipient=users["expert"],
+            notification_type=Notification.Type.EXPERT_PROJECTS_ASSIGNED,
+            title="Назначен проект на оценку",
+            message="Проверьте демо-проект участника в Smart Campus Challenge.",
+            object_type="partner_program",
+            object_id=programs["demo-published-smart-campus"].id,
+            url="/office/program",
+            dedupe_key="demo-expert-assignment",
+        )
+
+    def _ensure_bulk_notifications(self, programs, users):
+        published_program = programs["demo-published-smart-campus"]
+        for index, participant in enumerate(users["participant_pool"], start=1):
+            self._ensure_notification(
+                recipient=participant,
+                notification_type=Notification.Type.PROGRAM_MODERATION_APPROVED,
+                title=f"Демо-чемпионат #{index:03d} доступен",
+                message=(
+                    "На стенде доступен опубликованный кейс-чемпионат с "
+                    "регистрацией, проектами и экспертной оценкой."
+                ),
+                object_type="partner_program",
+                object_id=published_program.id,
+                url="/office/program",
+                dedupe_key=f"demo-participant-feed-{index:03d}",
+            )
+
+        for index, expert in enumerate(users["expert_pool"], start=1):
+            self._ensure_notification(
+                recipient=expert,
+                notification_type=Notification.Type.EXPERT_PROJECTS_ASSIGNED,
+                title=f"Демо-назначение эксперта #{index:03d}",
+                message="Проверьте назначенные демо-проекты в кабинете эксперта.",
+                object_type="partner_program",
+                object_id=published_program.id,
+                url="/office/program",
+                dedupe_key=f"demo-expert-feed-{index:03d}",
+            )
+
+        for index, organizer in enumerate(users["organizer_pool"], start=1):
+            self._ensure_notification(
+                recipient=organizer,
+                notification_type=Notification.Type.COMPANY_VERIFICATION_SUBMITTED,
+                title=f"Демо-статус компании #{index:03d}",
+                message=(
+                    "В демо-данных есть организаторы с подтвержденной, "
+                    "ожидающей и отклоненной компанией."
+                ),
+                object_type="partner_program",
+                object_id=published_program.id,
+                url="/office/program",
+                dedupe_key=f"demo-organizer-feed-{index:03d}",
+            )
+
+    def _count_demo_records(self):
+        demo_project_filter = {
+            "name__in": [
+                "Demo Smart Campus Assistant",
+                *[
+                    f"Demo Case Project {index:03d}"
+                    for index in range(1, DEMO_PROJECT_COUNT + 1)
+                ],
+            ]
+        }
+        demo_company_inns = ["7707083893", "7802870820", "7714783093", "5406567890"]
+        return sum(
+            (
+                SkillCategory.objects.filter(name__in=SKILLS_BY_CATEGORY.keys()).count(),
+                Skill.objects.filter(
+                    category__name__in=SKILLS_BY_CATEGORY.keys()
+                ).count(),
+                SpecializationCategory.objects.filter(
+                    name__in=SPECIALIZATIONS_BY_CATEGORY.keys()
+                ).count(),
+                Specialization.objects.filter(
+                    category__name__in=SPECIALIZATIONS_BY_CATEGORY.keys()
+                ).count(),
+                Industry.objects.filter(
+                    name="Цифровые продукты и городские сервисы"
+                ).count(),
+                User.objects.filter(email__endswith=f"@{DEMO_EMAIL_DOMAIN}").count(),
+                UserNotificationPreferences.objects.filter(
+                    user__email__endswith=f"@{DEMO_EMAIL_DOMAIN}"
+                ).count(),
+                Member.objects.filter(
+                    user__email__endswith=f"@{DEMO_EMAIL_DOMAIN}"
+                ).count(),
+                Expert.objects.filter(
+                    user__email__endswith=f"@{DEMO_EMAIL_DOMAIN}"
+                ).count(),
+                Company.objects.filter(inn__in=demo_company_inns).count(),
+                UserFile.objects.filter(
+                    name="selectel-demo-championship-rules"
+                ).count(),
+                PartnerProgram.objects.filter(tag__startswith="demo-").count(),
+                PartnerProgramField.objects.filter(
+                    partner_program__tag__startswith="demo-"
+                ).count(),
+                PartnerProgramMaterial.objects.filter(
+                    program__tag__startswith="demo-"
+                ).count(),
+                Criteria.objects.filter(partner_program__tag__startswith="demo-").count(),
+                LegalDocument.objects.filter(version=DEMO_VERSION).count(),
+                PartnerProgramLegalSettings.objects.filter(
+                    program__tag__startswith="demo-"
+                ).count(),
+                PartnerProgramVerificationRequest.objects.filter(
+                    program__tag__startswith="demo-"
+                ).count(),
+                ModerationLog.objects.filter(program__tag__startswith="demo-").count(),
+                PartnerProgramInvite.objects.filter(
+                    program__tag__startswith="demo-"
+                ).count(),
+                PartnerProgramParticipantConsent.objects.filter(
+                    program__tag__startswith="demo-"
+                ).count(),
+                Project.objects.filter(**demo_project_filter).count(),
+                ProjectCompany.objects.filter(
+                    project__name__in=demo_project_filter["name__in"]
+                ).count(),
+                ProjectLink.objects.filter(
+                    project__name__in=demo_project_filter["name__in"]
+                ).count(),
+                Collaborator.objects.filter(
+                    project__name__in=demo_project_filter["name__in"]
+                ).count(),
+                PartnerProgramUserProfile.objects.filter(
+                    partner_program__tag__startswith="demo-"
+                ).count(),
+                PartnerProgramProject.objects.filter(
+                    partner_program__tag__startswith="demo-"
+                ).count(),
+                PartnerProgramFieldValue.objects.filter(
+                    program_project__partner_program__tag__startswith="demo-"
+                ).count(),
+                ProjectExpertAssignment.objects.filter(
+                    partner_program__tag__startswith="demo-"
+                ).count(),
+                ProjectEvaluation.objects.filter(
+                    program_project__partner_program__tag__startswith="demo-"
+                ).count(),
+                ProjectEvaluationScore.objects.filter(
+                    evaluation__program_project__partner_program__tag__startswith="demo-"
+                ).count(),
+                ProjectScore.objects.filter(
+                    criteria__partner_program__tag__startswith="demo-"
+                ).count(),
+                Notification.objects.filter(dedupe_key__startswith="demo-").count(),
+                NotificationDelivery.objects.filter(
+                    notification__dedupe_key__startswith="demo-"
+                ).count(),
+            )
+        )
+
+    def _ensure_notification(
+        self,
+        *,
+        recipient,
+        notification_type,
+        title,
+        message,
+        object_type,
+        object_id,
+        url,
+        dedupe_key,
+    ):
+        notification, _ = Notification.objects.update_or_create(
+            recipient=recipient,
+            type=notification_type,
+            dedupe_key=dedupe_key,
+            defaults={
+                "title": title,
+                "message": message,
+                "object_type": object_type,
+                "object_id": object_id,
+                "url": url,
+                "is_read": False,
+            },
+        )
+        NotificationDelivery.objects.update_or_create(
+            notification=notification,
+            channel=NotificationDelivery.Channel.IN_APP,
+            defaults={"status": NotificationDelivery.Status.SENT, "sent_at": timezone.now()},
+        )
+        return notification
+
+    def _upsert_first(self, model, lookup, defaults):
         obj = model.objects.filter(**lookup).first()
-        if obj is not None:
-            return obj
-        return model.objects.create(**lookup)
+        if obj is None:
+            return model.objects.create(**lookup, **defaults)
+
+        changed_fields = []
+        for field, value in defaults.items():
+            if getattr(obj, field) != value:
+                setattr(obj, field, value)
+                changed_fields.append(field)
+
+        if changed_fields:
+            model_fields = {field.name for field in obj._meta.fields}
+            update_fields = [field for field in changed_fields if field in model_fields]
+            if "datetime_updated" in model_fields and "datetime_updated" not in update_fields:
+                update_fields.append("datetime_updated")
+            if "updated_at" in model_fields and "updated_at" not in update_fields:
+                update_fields.append("updated_at")
+            obj.save(update_fields=update_fields or None)
+        return obj
