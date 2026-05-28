@@ -1,7 +1,6 @@
 # LEGACY compose path.
 # Do not use this file for prod or CI/CD deployments.
 # Intentional manual use requires: docker compose --profile legacy ...
-version: '3.9'
 
 services:
   web:
@@ -55,6 +54,22 @@ services:
       - web
     volumes:
       - .:/procollab
+
+  telegram_polling:
+    profiles: ["legacy"]
+    container_name: telegram_polling
+    restart: always
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+    env_file:
+      - .env
+    command: bash ./scripts/telegram_polling.sh
+    depends_on:
+      - redis
+      - web
+    volumes:
+      - ./log:/procollab/log
 
 volumes:
   log:
