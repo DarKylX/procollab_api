@@ -3,6 +3,7 @@ import uuid
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
+from django.core.validators import URLValidator
 from django.db import models
 from django.utils import timezone
 
@@ -20,10 +21,10 @@ class LegalDocument(models.Model):
     TYPE_ORGANIZER_TERMS = "organizer_terms"
 
     TYPE_CHOICES = [
-        (TYPE_PRIVACY_POLICY, "Privacy policy"),
-        (TYPE_PARTICIPANT_CONSENT, "Participant personal data consent"),
-        (TYPE_PARTICIPATION_TERMS, "Participation terms"),
-        (TYPE_ORGANIZER_TERMS, "Organizer terms"),
+        (TYPE_PRIVACY_POLICY, "Политика обработки персональных данных"),
+        (TYPE_PARTICIPANT_CONSENT, "Согласие участника на обработку данных"),
+        (TYPE_PARTICIPATION_TERMS, "Правила участия платформы"),
+        (TYPE_ORGANIZER_TERMS, "Условия для организатора"),
     ]
 
     type = models.CharField(max_length=64, choices=TYPE_CHOICES, db_index=True)
@@ -84,27 +85,44 @@ class PartnerProgram(models.Model):
     VERIFICATION_STATUS_REJECTED = "rejected"
     VERIFICATION_STATUS_REVOKED = "revoked"
     STATUS_CHOICES = [
-        (STATUS_DRAFT, "Draft"),
-        (STATUS_PENDING_MODERATION, "Pending moderation"),
-        (STATUS_PUBLISHED, "Published"),
-        (STATUS_REJECTED, "Rejected"),
-        (STATUS_COMPLETED, "Completed"),
-        (STATUS_FROZEN, "Frozen"),
-        (STATUS_ARCHIVED, "Archived"),
+        (STATUS_DRAFT, "Черновик"),
+        (STATUS_PENDING_MODERATION, "На модерации"),
+        (STATUS_PUBLISHED, "Опубликован"),
+        (STATUS_REJECTED, "На доработке"),
+        (STATUS_COMPLETED, "Завершен"),
+        (STATUS_FROZEN, "Заморожен"),
+        (STATUS_ARCHIVED, "Архив"),
     ]
     VERIFICATION_STATUS_CHOICES = [
-        (VERIFICATION_STATUS_NOT_REQUESTED, "Not requested"),
-        (VERIFICATION_STATUS_PENDING, "Pending"),
-        (VERIFICATION_STATUS_VERIFIED, "Verified"),
-        (VERIFICATION_STATUS_REJECTED, "Rejected"),
-        (VERIFICATION_STATUS_REVOKED, "Revoked"),
+        (VERIFICATION_STATUS_NOT_REQUESTED, "Не запрошена"),
+        (VERIFICATION_STATUS_PENDING, "На рассмотрении"),
+        (VERIFICATION_STATUS_VERIFIED, "Подтверждена"),
+        (VERIFICATION_STATUS_REJECTED, "Отклонена"),
+        (VERIFICATION_STATUS_REVOKED, "Отозвана"),
     ]
     PARTICIPATION_FORMAT_INDIVIDUAL = "individual"
     PARTICIPATION_FORMAT_TEAM = "team"
     PARTICIPATION_FORMAT_CHOICES = [
-        (PARTICIPATION_FORMAT_INDIVIDUAL, "Individual"),
-        (PARTICIPATION_FORMAT_TEAM, "Team"),
+        (PARTICIPATION_FORMAT_INDIVIDUAL, "Индивидуально"),
+        (PARTICIPATION_FORMAT_TEAM, "Командно"),
     ]
+    MODERATION_REQUIRED_SECTIONS = (
+        "basic_info",
+        "dates",
+        "registration",
+        "legal_terms",
+    )
+    READINESS_WEIGHTS = {
+        "basic_info": 20,
+        "dates": 15,
+        "registration": 15,
+        "legal_terms": 15,
+        "materials": 10,
+        "criteria_experts": 10,
+        "visual_assets": 5,
+        "verification": 5,
+        "certificate_template": 5,
+    }
 
     name = models.TextField(
         verbose_name="Название",
@@ -324,7 +342,7 @@ class PartnerProgram(models.Model):
             return False
         readiness = self.calculate_readiness()
         return all(
-            readiness.get(key) is True for key in ("basic_info", "dates", "registration")
+            readiness.get(key) is True for key in self.MODERATION_REQUIRED_SECTIONS
         )
 
     def _related_exists(self, related_name: str) -> bool:
@@ -333,6 +351,46 @@ class PartnerProgram(models.Model):
         except (AttributeError, ValueError):
             return False
 
+    def _has_valid_registration_link(self) -> bool:
+        link = (self.registration_link or "").strip()
+        if not link:
+            return False
+        try:
+            URLValidator()(link)
+        except ValidationError:
+            return False
+        return True
+
+    def _has_configured_registration_schema(self) -> bool:
+        if self._related_exists("fields"):
+            return True
+
+        if not isinstance(self.data_schema, dict):
+            return False
+        if self.data_schema == get_default_data_schema():
+            return False
+
+        from partner_programs.privacy import iter_data_schema_fields
+
+        allowed_types = {"text", "textarea", "checkbox", "select", "radio", "file"}
+        for field_id, field in iter_data_schema_fields(self.data_schema):
+            field_type = (
+                field.get("type") or field.get("field_type") or field.get("fieldType")
+            )
+            label = field.get("label") or field.get("name") or field_id
+            if (
+                str(field_type or "").strip() in allowed_types
+                and str(label or "").strip()
+            ):
+                return True
+        return False
+
+    def _has_registration_setup(self) -> bool:
+        return (
+            self._has_valid_registration_link()
+            or self._has_configured_registration_schema()
+        )
+
     def calculate_readiness(self) -> dict:
         try:
             certificate_template = getattr(self, "certificate_template", None)
@@ -340,9 +398,13 @@ class PartnerProgram(models.Model):
             certificate_template = None
 
         from project_rates.models import Criteria
+        from partner_programs.privacy import (
+            collect_privacy_blockers,
+            has_privacy_blockers,
+        )
 
         description = (self.description or "").strip()
-        submission_deadline = self.get_project_submission_deadline()
+        submission_deadline = self.datetime_project_submission_ends
         dates_valid = bool(
             self.datetime_started
             and self.datetime_registration_ends
@@ -382,19 +444,28 @@ class PartnerProgram(models.Model):
                 and (self.city or "").strip()
             ),
             "dates": dates_valid,
-            "registration": bool(self.data_schema or self._related_exists("fields")),
+            "registration": self._has_registration_setup(),
+            "legal_terms": not has_privacy_blockers(collect_privacy_blockers(self)),
             "materials": self._related_exists("materials"),
             "criteria_experts": criteria_experts_ready,
-            "visual_assets": bool(self.cover_image_address),
+            "visual_assets": bool(
+                self.cover_image_address
+                or self.mobile_cover_image_address
+                or self.image_address
+                or self.advertisement_image_address
+            ),
             "certificate_template": certificate_template is not None,
             "verification": self.verification_status == self.VERIFICATION_STATUS_VERIFIED,
         }
 
     def get_readiness_percentage(self) -> int:
         readiness = self.calculate_readiness()
-        required_keys = ["basic_info", "dates", "registration"]
-        completed = sum(1 for key in required_keys if readiness.get(key) is True)
-        return round(completed / len(required_keys) * 100)
+        percentage = sum(
+            weight
+            for key, weight in self.READINESS_WEIGHTS.items()
+            if readiness.get(key) is True or readiness.get(key) == "not_applicable"
+        )
+        return max(0, min(100, int(percentage)))
 
     def get_operational_readiness_percentage(self) -> int:
         readiness = self.calculate_readiness()
@@ -426,9 +497,9 @@ class PartnerProgramVerificationRequest(models.Model):
     STATUS_REJECTED = "rejected"
 
     STATUS_CHOICES = [
-        (STATUS_PENDING, "Pending"),
-        (STATUS_APPROVED, "Approved"),
-        (STATUS_REJECTED, "Rejected"),
+        (STATUS_PENDING, "На рассмотрении"),
+        (STATUS_APPROVED, "Одобрена"),
+        (STATUS_REJECTED, "Отклонена"),
     ]
 
     REJECTION_COMPANY_NOT_CONFIRMED = "company_not_confirmed"
@@ -438,11 +509,11 @@ class PartnerProgramVerificationRequest(models.Model):
     REJECTION_OTHER = "other"
 
     REJECTION_REASON_CHOICES = [
-        (REJECTION_COMPANY_NOT_CONFIRMED, "Company data is not confirmed"),
-        (REJECTION_INSUFFICIENT_DOCUMENTS, "Documents are insufficient"),
-        (REJECTION_INVALID_DOCUMENTS, "Documents are invalid"),
-        (REJECTION_CONTACT_NOT_VERIFIED, "Contact person is not verified"),
-        (REJECTION_OTHER, "Other reason"),
+        (REJECTION_COMPANY_NOT_CONFIRMED, "Данные компании не подтверждены"),
+        (REJECTION_INSUFFICIENT_DOCUMENTS, "Недостаточно документов"),
+        (REJECTION_INVALID_DOCUMENTS, "Некорректные документы"),
+        (REJECTION_CONTACT_NOT_VERIFIED, "Контактное лицо не подтверждено"),
+        (REJECTION_OTHER, "Другая причина"),
     ]
 
     program = models.ForeignKey(
