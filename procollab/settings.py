@@ -484,6 +484,11 @@ FRONTEND_URL = config(
     cast=str,
 )
 SITE_URL = config("SITE_URL", default=FRONTEND_URL, cast=str)
+PUBLIC_API_URL = config(
+    "PUBLIC_API_URL",
+    default=(f"{SITE_URL.rstrip('/')}/api" if SITE_URL else ""),
+    cast=str,
+)
 VERIFY_EMAIL_REDIRECT_URL = config(
     "VERIFY_EMAIL_REDIRECT_URL",
     default=(

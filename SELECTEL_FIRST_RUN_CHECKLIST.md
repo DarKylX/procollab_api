@@ -107,6 +107,7 @@ CORS_ALLOWED_ORIGINS=http://<PUBLIC_IP>
 CORS_ALLOW_ALL_ORIGINS=False
 FRONTEND_URL=http://<PUBLIC_IP>
 SITE_URL=http://<PUBLIC_IP>
+PUBLIC_API_URL=http://<PUBLIC_IP>/api
 SECURE_SSL_REDIRECT=False
 SECURE_HSTS_SECONDS=0
 SECURE_HSTS_INCLUDE_SUBDOMAINS=False
@@ -134,6 +135,7 @@ DEFAULT_FROM_EMAIL=<verified-sender>
 EMAIL_USER=<verified-sender>
 UNISENDER_GO_API_KEY=<secret>
 UNISENDER_GO_API_URL=https://go1.unisender.ru/ru/transactional/api/v1/
+PUBLIC_API_URL=https://procollab.pro/api
 VERIFY_EMAIL_REDIRECT_URL=https://procollab.pro/auth/verification/
 PASSWORD_RESET_FRONTEND_URL=https://procollab.pro/auth/reset_password/
 ```
@@ -242,6 +244,7 @@ Prepare these values outside the repository:
 - Selectel storage credentials, only if switching to `FILE_STORAGE=selectel`.
 - `FRONTEND_URL`.
 - `SITE_URL`.
+- `PUBLIC_API_URL`.
 - `ALLOWED_HOSTS`.
 - `CSRF_TRUSTED_ORIGINS`.
 - `CORS_ALLOWED_ORIGINS`.
