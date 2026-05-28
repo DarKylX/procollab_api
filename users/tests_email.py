@@ -14,6 +14,7 @@ from users.models import CustomUser
     DEFAULT_FROM_EMAIL="PROCOLLAB <sender@example.com>",
     EMAIL_USER="legacy@example.com",
     SITE_URL="https://procollab.pro",
+    PUBLIC_API_URL="https://procollab.pro/api",
     FRONTEND_URL="https://procollab.pro",
     VERIFY_EMAIL_REDIRECT_URL="https://procollab.pro/auth/verification/",
 )
@@ -35,7 +36,7 @@ class TransactionalEmailTests(TestCase):
         self.assertEqual(message.from_email, "PROCOLLAB <sender@example.com>")
         self.assertEqual(message.to, ["new.user@example.com"])
         self.assertIn("PROCOLLAB | Подтверждение почты", message.subject)
-        self.assertIn("https://procollab.pro/", message.body)
+        self.assertIn("https://procollab.pro/api/auth/account-confirm-email/", message.body)
         self.assertIn("token=", message.body)
         self.assertTrue(message.alternatives)
         self.assertIn("text/html", message.alternatives[0])

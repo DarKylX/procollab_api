@@ -9,7 +9,7 @@ from django.utils.timezone import now
 from rest_framework.exceptions import ValidationError
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from core.email import build_site_url, send_html_email
+from core.email import build_public_api_url, send_html_email
 from files.models import UserFile
 from users.models import UserAchievement, UserLink
 
@@ -19,7 +19,7 @@ User = get_user_model()
 def verify_email(user, request):
     token = RefreshToken.for_user(user).access_token
     relative_link = reverse("users:account_email_verification_sent")
-    absolute_url = build_site_url(relative_link, {"token": token})
+    absolute_url = build_public_api_url(relative_link, {"token": token})
     context = {
         "user": user,
         "absolute_url": absolute_url,

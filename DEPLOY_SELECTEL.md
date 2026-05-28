@@ -37,6 +37,7 @@ SECURE_SSL_REDIRECT=True
 SECURE_HSTS_SECONDS=0
 FRONTEND_URL=https://app.example.com
 SITE_URL=https://app.example.com
+PUBLIC_API_URL=https://app.example.com/api
 ```
 
 PostgreSQL можно задать через `DATABASE_URL`:
@@ -77,6 +78,7 @@ EMAIL_USER=procollab_info@procollab.ru
 DEFAULT_FROM_EMAIL=PROCOLLAB <procollab_info@procollab.ru>
 UNISENDER_GO_API_KEY=
 UNISENDER_GO_API_URL=https://go1.unisender.ru/ru/transactional/api/v1/
+PUBLIC_API_URL=https://procollab.pro/api
 VERIFY_EMAIL_REDIRECT_URL=https://procollab.pro/auth/verification/
 PASSWORD_RESET_FRONTEND_URL=https://procollab.pro/auth/reset_password/
 ```
