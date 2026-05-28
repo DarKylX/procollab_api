@@ -189,6 +189,41 @@ celery -A procollab worker --loglevel=info
 celery -A procollab beat --scheduler django_celery_beat.schedulers:DatabaseScheduler --loglevel=info
 ```
 
+## 5.1 Telegram bot polling
+
+Selectel can have unstable direct access between Telegram and the server. For the MVP/pre-prod setup, keep Telegram in polling mode and run it as a dedicated compose service instead of a manual background command inside `web`.
+
+Required env:
+
+```env
+TELEGRAM_BOT_TOKEN=<secret>
+TELEGRAM_BOT_USERNAME=procollab_notifications_bot
+TELEGRAM_NOTIFICATIONS_ENABLED=True
+TELEGRAM_PROXY_URL=http://<PROXY_IP>:8888
+TELEGRAM_POLLING_TIMEOUT=10
+TELEGRAM_POLLING_SLEEP=1
+```
+
+Before enabling polling, make sure the webhook is deleted:
+
+```bash
+TOKEN=$(grep '^TELEGRAM_BOT_TOKEN=' .env | cut -d= -f2-)
+PROXY=$(grep '^TELEGRAM_PROXY_URL=' .env | cut -d= -f2-)
+curl -x "$PROXY" --connect-timeout 10 --max-time 60 \
+  "https://api.telegram.org/bot${TOKEN}/deleteWebhook?drop_pending_updates=true"
+unset TOKEN PROXY
+```
+
+Start and inspect the persistent polling service:
+
+```bash
+docker compose --profile legacy up -d --build web celerys telegram_polling nginx
+docker compose --profile legacy ps telegram_polling
+docker compose --profile legacy logs --tail=80 telegram_polling
+```
+
+Do not use manual `docker compose exec -d web python manage.py poll_telegram_updates ...` in normal operation: that process dies when the `web` container is rebuilt.
+
 ## 6. Frontend build
 
 В frontend-репозитории:

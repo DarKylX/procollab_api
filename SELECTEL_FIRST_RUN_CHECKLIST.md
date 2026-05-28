@@ -94,6 +94,24 @@ celery -A procollab worker --loglevel=info
 celery -A procollab beat --scheduler django_celery_beat.schedulers:DatabaseScheduler --loglevel=info
 ```
 
+Telegram bot polling for Selectel:
+
+```env
+TELEGRAM_BOT_TOKEN=<secret>
+TELEGRAM_BOT_USERNAME=procollab_notifications_bot
+TELEGRAM_NOTIFICATIONS_ENABLED=True
+TELEGRAM_PROXY_URL=http://<PROXY_IP>:8888
+TELEGRAM_POLLING_TIMEOUT=10
+TELEGRAM_POLLING_SLEEP=1
+```
+
+Run it as a dedicated compose service, not through manual `exec -d`:
+
+```bash
+docker compose --profile legacy up -d --build web celerys telegram_polling nginx
+docker compose --profile legacy logs --tail=80 telegram_polling
+```
+
 ## 6. Backend env for temporary IP run
 
 Until there is a domain and TLS, run by public IP with explicit HTTP origins:
@@ -223,6 +241,7 @@ Start services with systemd or another supervisor:
 - Media files load according to selected storage mode.
 - Email notification is sent through Unisender Go.
 - Celery worker is alive: `celery -A procollab inspect ping`.
+- Telegram polling service is alive: `docker compose --profile legacy ps telegram_polling`.
 - WebSocket endpoint connects through Nginx.
 
 ## 12. Data needed from project owner
