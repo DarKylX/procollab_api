@@ -17,6 +17,10 @@ def build_site_url(path: str = "", query: dict | None = None) -> str:
     return _build_url(getattr(settings, "SITE_URL", ""), path, query)
 
 
+def build_public_api_url(path: str = "", query: dict | None = None) -> str:
+    return _build_url(getattr(settings, "PUBLIC_API_URL", ""), path, query)
+
+
 def build_frontend_url(path: str = "", query: dict | None = None) -> str:
     return _build_url(getattr(settings, "FRONTEND_URL", ""), path, query)
 
