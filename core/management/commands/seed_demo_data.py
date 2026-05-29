@@ -75,6 +75,10 @@ User = get_user_model()
 
 DEFAULT_PASSWORD = "DemoPassword123"
 EMAIL_DOMAIN = "demo.procollab.local"
+MIN_NON_CROSS_TABLE_RECORDS = 300
+DEFAULT_USERS_COUNT = 75
+DEFAULT_PROJECTS_COUNT = 36
+DEFAULT_PROGRAMS_COUNT = 15
 
 DEMO_ACCOUNT_SPECS = [
     {
@@ -85,6 +89,7 @@ DEMO_ACCOUNT_SPECS = [
         "user_type": User.MEMBER,
         "is_staff": True,
         "is_superuser": True,
+        "role_label": "администратор платформы",
     },
     {
         "key": "organizer_verified",
@@ -92,6 +97,7 @@ DEMO_ACCOUNT_SPECS = [
         "first_name": "Verified",
         "last_name": "Organizer",
         "user_type": User.MEMBER,
+        "role_label": "организатор с подтвержденной компанией",
     },
     {
         "key": "organizer_pending",
@@ -99,6 +105,15 @@ DEMO_ACCOUNT_SPECS = [
         "first_name": "Pending",
         "last_name": "Organizer",
         "user_type": User.MEMBER,
+        "role_label": "организатор с заявкой на верификацию",
+    },
+    {
+        "key": "organizer_unverified",
+        "email": f"demo.organizer.unverified@{EMAIL_DOMAIN}",
+        "first_name": "Unverified",
+        "last_name": "Organizer",
+        "user_type": User.MEMBER,
+        "role_label": "организатор без подтвержденной компании",
     },
     {
         "key": "expert",
@@ -106,6 +121,15 @@ DEMO_ACCOUNT_SPECS = [
         "first_name": "Demo",
         "last_name": "Expert",
         "user_type": User.EXPERT,
+        "role_label": "эксперт с назначенными проектами",
+    },
+    {
+        "key": "expert_secondary",
+        "email": f"demo.expert.secondary@{EMAIL_DOMAIN}",
+        "first_name": "Second",
+        "last_name": "Expert",
+        "user_type": User.EXPERT,
+        "role_label": "дополнительный эксперт",
     },
     {
         "key": "participant",
@@ -113,6 +137,23 @@ DEMO_ACCOUNT_SPECS = [
         "first_name": "Demo",
         "last_name": "Participant",
         "user_type": User.MEMBER,
+        "role_label": "обычный участник",
+    },
+    {
+        "key": "participant_submitted",
+        "email": f"demo.participant.submitted@{EMAIL_DOMAIN}",
+        "first_name": "Submitted",
+        "last_name": "Participant",
+        "user_type": User.MEMBER,
+        "role_label": "участник со сданным проектом",
+    },
+    {
+        "key": "participant_draft_project",
+        "email": f"demo.participant.draft@{EMAIL_DOMAIN}",
+        "first_name": "Draft",
+        "last_name": "Participant",
+        "user_type": User.MEMBER,
+        "role_label": "участник с прикрепленным, но не сданным проектом",
     },
 ]
 
@@ -185,6 +226,8 @@ REGIONS = [
     ("Краснодарский край", "Краснодар"),
     ("Нижегородская область", "Нижний Новгород"),
 ]
+
+PROGRAM_FORMATS = ["Онлайн", "Оффлайн"]
 
 INDUSTRIES = [
     "Образовательные технологии",
@@ -433,17 +476,20 @@ PROJECT_ROLES = [
 
 class Command(BaseCommand):
     help = (
-        "Create idempotent demo data for the Selectel pre-prod stand. "
-        "Usage: DEMO_PASSWORD=... python manage.py seed_demo_data"
+        "Create idempotent demo data for the Selectel pre-prod stand: users, "
+        "projects, case championships, submissions, expert scores, invites, "
+        "notifications and certificates. Usage: DEMO_PASSWORD=... "
+        "python manage.py seed_demo_data"
     )
 
     def add_arguments(self, parser):
-        parser.add_argument("--users", type=int, default=30)
-        parser.add_argument("--projects", type=int, default=12)
-        parser.add_argument("--programs", type=int, default=4)
+        parser.add_argument("--users", type=int, default=DEFAULT_USERS_COUNT)
+        parser.add_argument("--projects", type=int, default=DEFAULT_PROJECTS_COUNT)
+        parser.add_argument("--programs", type=int, default=DEFAULT_PROGRAMS_COUNT)
         parser.add_argument("--news-per-user", type=int, default=2)
         parser.add_argument("--news-per-project", type=int, default=3)
         parser.add_argument("--seed", type=int, default=20260501)
+        parser.add_argument("--min-records", type=int, default=MIN_NON_CROSS_TABLE_RECORDS)
         parser.add_argument(
             "--password",
             default=os.environ.get("DEMO_PASSWORD", DEFAULT_PASSWORD),
@@ -456,6 +502,7 @@ class Command(BaseCommand):
         programs_count = options["programs"]
         news_per_user = options["news_per_user"]
         news_per_project = options["news_per_project"]
+        min_records = options["min_records"]
 
         if (
             min(
@@ -464,6 +511,7 @@ class Command(BaseCommand):
                 programs_count,
                 news_per_user,
                 news_per_project,
+                min_records,
             )
             < 0
         ):
@@ -519,6 +567,12 @@ class Command(BaseCommand):
             rnd=rnd,
         )
         demo_record_count = self._demo_record_count()
+        if demo_record_count < min_records:
+            raise CommandError(
+                "Demo data does not satisfy the minimum record count: "
+                f"{demo_record_count} < {min_records}. Increase --users, --projects "
+                "or --programs."
+            )
 
         self.stdout.write(
             self.style.SUCCESS(
@@ -538,7 +592,10 @@ class Command(BaseCommand):
         )
         self.stdout.write(
             "Named demo accounts: "
-            + ", ".join(spec["email"] for spec in DEMO_ACCOUNT_SPECS)
+            + "; ".join(
+                f"{spec['email']} ({spec.get('role_label', spec['key'])})"
+                for spec in DEMO_ACCOUNT_SPECS
+            )
         )
 
     def _ensure_industries(self):
@@ -1029,7 +1086,7 @@ class Command(BaseCommand):
             "tag": tag,
             "description": description if fill_level != "minimal" else "",
             "is_competitive": index % 2 == 1,
-            "city": REGIONS[index % len(REGIONS)][1],
+            "city": PROGRAM_FORMATS[(index - 1) % len(PROGRAM_FORMATS)],
             "image_address": self._program_image(index, fill_level, "program"),
             "cover_image_address": self._program_image(index, fill_level, "cover"),
             "advertisement_image_address": self._program_image(index, fill_level, "ad"),
@@ -1543,7 +1600,20 @@ class Command(BaseCommand):
 
         if len(programs) > 1:
             programs[1].managers.add(organizer_pending)
-        private_program = next((program for program in programs if program.is_private), None)
+        if len(programs) > 2:
+            programs[2].managers.add(
+                demo_accounts.get("organizer_unverified", organizer_pending)
+            )
+        private_program = next(
+            (
+                program
+                for program in programs
+                if program.is_private and program.status == PartnerProgram.STATUS_PUBLISHED
+            ),
+            None,
+        )
+        if private_program is None:
+            private_program = next((program for program in programs if program.is_private), None)
         if private_program is None:
             private_program = primary_program
             private_program.is_private = True
@@ -1762,50 +1832,101 @@ class Command(BaseCommand):
 
     def _ensure_notifications(self, programs, organizer, expert, participant):
         count = 0
-        notification_specs = [
+        if not programs:
+            return count
+
+        notification_templates = [
+            (
+                organizer,
+                Notification.Type.PROGRAM_SUBMITTED_TO_MODERATION,
+                "Чемпионат отправлен на модерацию",
+                "Заявка по демо-чемпионату ожидает решения администратора.",
+            ),
             (
                 organizer,
                 Notification.Type.PROGRAM_MODERATION_APPROVED,
-                "Program approved",
-                programs[0],
+                "Чемпионат одобрен",
+                "Демо-чемпионат прошел модерацию и готов к публикации.",
+            ),
+            (
+                organizer,
+                Notification.Type.PROGRAM_MODERATION_REJECTED,
+                "Чемпионат требует доработки",
+                "Администратор оставил замечания по демо-чемпионату.",
+            ),
+            (
+                organizer,
+                Notification.Type.COMPANY_VERIFICATION_SUBMITTED,
+                "Заявка на верификацию отправлена",
+                "Демо-заявка компании-организатора находится на проверке.",
+            ),
+            (
+                organizer,
+                Notification.Type.COMPANY_VERIFICATION_APPROVED,
+                "Компания подтверждена",
+                "Демо-компания организатора успешно прошла проверку.",
             ),
             (
                 expert,
                 Notification.Type.EXPERT_PROJECTS_ASSIGNED,
-                "Expert projects assigned",
-                programs[0],
+                "Назначены проекты на оценку",
+                "В демо-чемпионате появились проекты для экспертной оценки.",
             ),
             (
                 participant,
-                Notification.Type.PROGRAM_SUBMITTED_TO_MODERATION,
-                "Project submitted",
-                programs[0],
+                Notification.Type.PROGRAM_MODERATION_APPROVED,
+                "Открыта регистрация на чемпионат",
+                "На витрине опубликован новый демо-чемпионат.",
             ),
         ]
-        for recipient, notification_type, title, program in notification_specs:
-            notification, _ = Notification.objects.update_or_create(
-                recipient=recipient,
-                type=notification_type,
-                dedupe_key=f"demo:{notification_type}:{program.id}",
-                defaults={
-                    "title": title,
-                    "message": "Demo notification for championship workflow.",
-                    "object_type": "partner_program",
-                    "object_id": program.id,
-                    "url": f"/office/program/{program.id}",
-                    "is_read": False,
-                },
-            )
+        for program in programs[:8]:
+            for recipient, notification_type, title, message in notification_templates:
+                count += self._upsert_notification(
+                    recipient=recipient,
+                    notification_type=notification_type,
+                    title=title,
+                    message=message,
+                    program=program,
+                )
+        return count
+
+    def _upsert_notification(
+        self,
+        *,
+        recipient,
+        notification_type,
+        title,
+        message,
+        program,
+    ):
+        notification, _ = Notification.objects.update_or_create(
+            recipient=recipient,
+            type=notification_type,
+            dedupe_key=f"demo:{notification_type}:{program.id}",
+            defaults={
+                "title": title,
+                "message": message,
+                "object_type": "partner_program",
+                "object_id": program.id,
+                "url": f"/office/program/{program.id}",
+                "is_read": False,
+            },
+        )
+        deliveries = 0
+        for channel in (NotificationDelivery.Channel.IN_APP, NotificationDelivery.Channel.EMAIL):
             NotificationDelivery.objects.update_or_create(
                 notification=notification,
-                channel=NotificationDelivery.Channel.IN_APP,
+                channel=channel,
                 defaults={
                     "status": NotificationDelivery.Status.SENT,
                     "sent_at": timezone.now(),
+                    "attempts": 1,
+                    "last_error": "",
+                    "error": "",
                 },
             )
-            count += 2
-        return count
+            deliveries += 1
+        return 1 + deliveries
 
     def _ensure_participant_consent(self, program, participant):
         profile = PartnerProgramUserProfile.objects.filter(
