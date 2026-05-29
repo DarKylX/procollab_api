@@ -1,9 +1,20 @@
 import io
 from datetime import timedelta
 
+from django.apps import apps
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError, transaction
-from django.db.models import Count, Exists, OuterRef, Prefetch, Q
+from django.db.models import (
+    Count,
+    Exists,
+    IntegerField,
+    OuterRef,
+    Prefetch,
+    Q,
+    Subquery,
+    Value,
+)
+from django.db.models.functions import Coalesce
 from django.shortcuts import get_object_or_404, render
 from django.utils import timezone
 from django.utils.timezone import now
@@ -161,6 +172,63 @@ class PartnerProgramList(generics.ListCreateAPIView):
             return PartnerProgramCreateSerializer
         return self.serializer_class
 
+    def _with_list_counters(self, qs):
+        week_ago = timezone.now() - timedelta(days=7)
+        participant_counts = (
+            PartnerProgramUserProfile.objects.filter(partner_program=OuterRef("pk"))
+            .values("partner_program")
+            .annotate(total=Count("id"))
+            .values("total")
+        )
+        participant_delta_counts = (
+            PartnerProgramUserProfile.objects.filter(
+                partner_program=OuterRef("pk"),
+                datetime_created__gte=week_ago,
+            )
+            .values("partner_program")
+            .annotate(total=Count("id"))
+            .values("total")
+        )
+        project_counts = (
+            PartnerProgramProject.objects.filter(partner_program=OuterRef("pk"))
+            .values("partner_program")
+            .annotate(total=Count("id"))
+            .values("total")
+        )
+        active_project_counts = (
+            PartnerProgramProject.objects.filter(
+                partner_program=OuterRef("pk"),
+                submitted=True,
+            )
+            .values("partner_program")
+            .annotate(total=Count("id"))
+            .values("total")
+        )
+        Expert = apps.get_model("users", "Expert")
+        expert_counts = (
+            Expert.objects.filter(programs=OuterRef("pk"))
+            .values("programs")
+            .annotate(total=Count("id"))
+            .values("total")
+        )
+        return qs.annotate(
+            participants_count=Coalesce(
+                Subquery(participant_counts, output_field=IntegerField()), Value(0)
+            ),
+            participants_delta_week=Coalesce(
+                Subquery(participant_delta_counts, output_field=IntegerField()), Value(0)
+            ),
+            projects_count=Coalesce(
+                Subquery(project_counts, output_field=IntegerField()), Value(0)
+            ),
+            active_projects_count=Coalesce(
+                Subquery(active_project_counts, output_field=IntegerField()), Value(0)
+            ),
+            experts_count=Coalesce(
+                Subquery(expert_counts, output_field=IntegerField()), Value(0)
+            ),
+        )
+
     def get_queryset(self):
         user = self.request.user
         my_flag = self.request.query_params.get("my", "").lower() in {
@@ -217,6 +285,7 @@ class PartnerProgramList(generics.ListCreateAPIView):
             )
 
         user = self.request.user
+        qs = self._with_list_counters(qs)
         if not user.is_authenticated:
             return qs
 

@@ -547,6 +547,45 @@ class PartnerProgramCoreListTests(TestCase):
             {"id": company.id, "name": "Organizer", "inn": "1234567890"},
         )
 
+    def test_list_includes_program_counters(self):
+        program = self.create_program()
+        user = get_user_model().objects.create_user(
+            email="counter-user@example.com",
+            password="pass",
+            first_name="Counter",
+            last_name="User",
+            birthday="1990-01-01",
+        )
+        project = Project.objects.create(
+            leader=user,
+            draft=False,
+            is_public=False,
+            name="Counter project",
+        )
+        PartnerProgramUserProfile.objects.create(
+            user=user,
+            project=project,
+            partner_program=program,
+            partner_program_data={},
+        )
+        PartnerProgramProject.objects.create(
+            partner_program=program,
+            project=project,
+            submitted=True,
+            datetime_submitted=self.now,
+        )
+
+        request = self.factory.get("/programs/")
+        response = self.view(request)
+
+        self.assertEqual(response.status_code, 200)
+        program_data = response.data["results"][0]
+        self.assertEqual(program_data["participants_count"], 1)
+        self.assertEqual(program_data["participants_delta_week"], 1)
+        self.assertEqual(program_data["projects_count"], 1)
+        self.assertEqual(program_data["active_projects_count"], 1)
+        self.assertEqual(program_data["experts_count"], 0)
+
 
 class PartnerProgramCreateUpdateAPITests(TestCase):
     def setUp(self):
