@@ -121,7 +121,7 @@ def _basic_info_missing_fields(program: PartnerProgram) -> list[str]:
     description = (program.description or "").strip()
     if not (program.name or "").strip():
         missing.append("name")
-    if not description or len(description) < 180:
+    if not description:
         missing.append("description")
     if not (program.city or "").strip():
         missing.append("city")

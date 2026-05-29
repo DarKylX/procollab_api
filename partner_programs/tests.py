@@ -666,6 +666,28 @@ class PartnerProgramCreateUpdateAPITests(TestCase):
         )
         self.assertIsInstance(program.readiness, dict)
 
+    def test_manager_can_create_draft_with_short_description_and_basic_dates(self):
+        self.client.force_authenticate(self.manager)
+        finished = self.now + timezone.timedelta(days=10)
+
+        response = self.client.post(
+            "/programs/",
+            self.payload(
+                description="Краткое описание",
+                city="Онлайн",
+                datetime_registration_ends=None,
+                datetime_project_submission_ends=None,
+                datetime_evaluation_ends=None,
+                datetime_finished=finished.isoformat(),
+            ),
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        program = PartnerProgram.objects.get(id=response.data["id"])
+        self.assertEqual(program.datetime_registration_ends, finished)
+        self.assertEqual(program.datetime_project_submission_ends, finished)
+
     def test_manager_can_update_draft_program(self):
         program = self.create_program()
         self.client.force_authenticate(self.manager)
@@ -831,7 +853,7 @@ class PartnerProgramReadinessAndModerationTests(TestCase):
         cases = (
             (
                 "basic_info",
-                {"description": "too short"},
+                {"description": ""},
                 True,
             ),
             (
