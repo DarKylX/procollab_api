@@ -1572,18 +1572,31 @@ class Command(BaseCommand):
         return created_or_updated
 
     def _ensure_legal_documents(self):
-        for doc_type, title in (
-            (LegalDocument.TYPE_PRIVACY_POLICY, "Demo privacy policy"),
-            (LegalDocument.TYPE_PARTICIPANT_CONSENT, "Demo participant consent"),
-            (LegalDocument.TYPE_PARTICIPATION_TERMS, "Demo participation terms"),
-            (LegalDocument.TYPE_ORGANIZER_TERMS, "Demo organizer terms"),
-        ):
+        documents = {
+            LegalDocument.TYPE_PRIVACY_POLICY: (
+                "Политика обработки персональных данных PROCOLLAB",
+                "Документ определяет порядок обработки, хранения и защиты персональных данных пользователей платформы PROCOLLAB.",
+            ),
+            LegalDocument.TYPE_PARTICIPANT_CONSENT: (
+                "Согласие участника на обработку персональных данных",
+                "Участник подтверждает согласие на обработку данных, необходимых для регистрации, участия в чемпионате, проверки проекта и получения уведомлений.",
+            ),
+            LegalDocument.TYPE_PARTICIPATION_TERMS: (
+                "Правила участия в кейс-чемпионатах PROCOLLAB",
+                "Документ закрепляет общие правила участия, подачи проектов, экспертной оценки, публикации результатов и получения сертификатов.",
+            ),
+            LegalDocument.TYPE_ORGANIZER_TERMS: (
+                "Условия для организатора кейс-чемпионата",
+                "Организатор обязуется использовать данные участников только для проведения выбранного чемпионата, не передавать их третьим лицам и соблюдать требования законодательства о персональных данных.",
+            ),
+        }
+        for doc_type, (title, text) in documents.items():
             LegalDocument.objects.update_or_create(
                 type=doc_type,
                 version="demo-2026",
                 defaults={
                     "title": title,
-                    "content_html": f"<p>{title}</p>",
+                    "content_html": f"<h1>{title}</h1><p>{text}</p>",
                     "is_active": True,
                 },
             )

@@ -183,6 +183,11 @@ class PartnerProgramListSerializer(serializers.ModelSerializer):
     )
     is_user_liked = serializers.SerializerMethodField(method_name="get_is_user_liked")
     is_user_member = serializers.SerializerMethodField(method_name="get_is_user_member")
+    participants_count = serializers.SerializerMethodField()
+    participants_delta_week = serializers.SerializerMethodField()
+    projects_count = serializers.SerializerMethodField()
+    active_projects_count = serializers.SerializerMethodField()
+    experts_count = serializers.SerializerMethodField()
 
     def _get_user(self):
         user = self.context.get("user")
@@ -244,6 +249,21 @@ class PartnerProgramListSerializer(serializers.ModelSerializer):
     def get_can_export_contacts(self, program: PartnerProgram) -> bool:
         return can_view_participant_contacts(self._get_user(), program)
 
+    def get_participants_count(self, program: PartnerProgram) -> int:
+        return getattr(program, "participants_count", 0) or 0
+
+    def get_participants_delta_week(self, program: PartnerProgram) -> int:
+        return getattr(program, "participants_delta_week", 0) or 0
+
+    def get_projects_count(self, program: PartnerProgram) -> int:
+        return getattr(program, "projects_count", 0) or 0
+
+    def get_active_projects_count(self, program: PartnerProgram) -> int:
+        return getattr(program, "active_projects_count", 0) or 0
+
+    def get_experts_count(self, program: PartnerProgram) -> int:
+        return getattr(program, "experts_count", 0) or 0
+
     class Meta:
         model = PartnerProgram
         fields = (
@@ -274,6 +294,11 @@ class PartnerProgramListSerializer(serializers.ModelSerializer):
             "project_team_min_size",
             "project_team_max_size",
             "readiness",
+            "participants_count",
+            "participants_delta_week",
+            "projects_count",
+            "active_projects_count",
+            "experts_count",
             "datetime_started",
             "datetime_finished",
             "views_count",
