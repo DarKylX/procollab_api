@@ -54,10 +54,12 @@ urlpatterns = [
     path("vacancies/", include("vacancy.urls", namespace="vacancies")),
     path("core/", include("core.urls", namespace="core")),
     path("invites/", include("invites.urls", namespace="invites")),
+    path("invites/", include(public_invite_patterns)),
     path("auth/", include(("users.urls", "users"), namespace="users")),
     path("chats/", include("chats.urls", namespace="chats")),
     path("events/", include("events.urls", namespace="events")),
     path("programs/", include("partner_programs.urls", namespace="partner_programs")),
+    path("partner-programs/", include(program_invite_patterns)),
     path("api/partner-programs/", include(program_invite_patterns)),
     path("api/invites/", include(public_invite_patterns)),
     path(
