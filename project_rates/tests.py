@@ -140,7 +140,8 @@ class DistributedEvaluationAPITests(TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertEqual(
-            response.data["error"], "you are not assigned to rate this project"
+            response.data["error"],
+            "Вы не назначены экспертом для оценки этого проекта",
         )
         self.assertFalse(ProjectScore.objects.filter(project=self.project_1).exists())
 

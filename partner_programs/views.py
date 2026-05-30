@@ -159,7 +159,7 @@ def user_can_access_private_program(user, program: PartnerProgram) -> bool:
 
 
 class PartnerProgramList(generics.ListCreateAPIView):
-    queryset = PartnerProgram.objects.select_related("company").filter(
+    queryset = PartnerProgram.objects.select_related("company", "legal_settings").filter(
         Q(status=PartnerProgram.STATUS_PUBLISHED)
         | Q(draft=False, status=PartnerProgram.STATUS_DRAFT)
     )
@@ -244,7 +244,7 @@ class PartnerProgramList(generics.ListCreateAPIView):
             expert_qs = PartnerProgram.objects.filter(experts__user=user)
             base_qs = (
                 (manager_qs | member_qs | expert_qs)
-                .select_related("company")
+                .select_related("company", "legal_settings")
                 .exclude(status=PartnerProgram.STATUS_ARCHIVED)
                 .distinct()
             )
@@ -293,7 +293,13 @@ class PartnerProgramList(generics.ListCreateAPIView):
             partner_program=OuterRef("pk"),
             user=user,
         )
-        return qs.annotate(is_user_member=Exists(member_qs))
+        manager_qs = PartnerProgram.objects.filter(pk=OuterRef("pk"), managers=user)
+        expert_qs = PartnerProgram.objects.filter(pk=OuterRef("pk"), experts__user=user)
+        return qs.annotate(
+            is_user_member=Exists(member_qs),
+            is_user_manager=Exists(manager_qs),
+            is_user_expert=Exists(expert_qs),
+        )
 
 
 class PartnerProgramDetail(generics.RetrieveUpdateAPIView):
