@@ -29,7 +29,6 @@ from projects.validators import validate_project
 from .fields import PartnerProgramFieldValueUpdateSerializer
 
 User = get_user_model()
-PROGRAM_DESCRIPTION_MIN_LENGTH = 180
 PROGRAM_DESCRIPTION_MAX_LENGTH = 1000
 
 
@@ -734,17 +733,30 @@ class PartnerProgramCreateSerializer(serializers.ModelSerializer):
             "description": {
                 "required": True,
                 "allow_blank": False,
-                "min_length": PROGRAM_DESCRIPTION_MIN_LENGTH,
                 "max_length": PROGRAM_DESCRIPTION_MAX_LENGTH,
             },
             "city": {"required": True, "allow_blank": False},
-            "datetime_project_submission_ends": {"required": True, "allow_null": False},
+            "datetime_registration_ends": {"required": False, "allow_null": True},
+            "datetime_project_submission_ends": {"required": False, "allow_null": True},
         }
 
     def validate(self, attrs):
+        self._apply_draft_date_defaults(attrs)
         self._validate_schedule(attrs)
         self._validate_participation(attrs)
         return attrs
+
+    def _apply_draft_date_defaults(self, attrs):
+        finished = attrs.get("datetime_finished")
+        if not finished:
+            return
+
+        if not attrs.get("datetime_registration_ends"):
+            attrs["datetime_registration_ends"] = finished
+        if not attrs.get("datetime_project_submission_ends"):
+            attrs["datetime_project_submission_ends"] = (
+                attrs.get("datetime_registration_ends") or finished
+            )
 
     def _validate_schedule(self, attrs):
         started = attrs.get("datetime_started")
@@ -877,9 +889,6 @@ class PartnerProgramUpdateSerializer(serializers.ModelSerializer):
             "materials",
         )
         read_only_fields = ("id", "status")
-        extra_kwargs = {
-            "description": {"min_length": PROGRAM_DESCRIPTION_MIN_LENGTH},
-        }
 
     def validate(self, attrs):
         self._validate_schedule(attrs)

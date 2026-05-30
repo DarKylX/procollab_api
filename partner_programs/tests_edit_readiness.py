@@ -158,7 +158,7 @@ class ProgramEditReadinessTests(TestCase):
         )
 
     def test_submit_blocks_when_required_readiness_is_missing(self):
-        program = self.create_program(description="short")
+        program = self.create_program(description="")
         self.client.force_authenticate(self.manager)
 
         response = self.client.post(f"/programs/{program.id}/submit-to-moderation/")

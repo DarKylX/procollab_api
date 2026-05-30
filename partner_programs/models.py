@@ -141,7 +141,7 @@ class PartnerProgram(models.Model):
         help_text="Если включено, проекты участников подлежат сдаче на проверку",
     )
     city = models.TextField(
-        verbose_name="Город",
+        verbose_name="Формат проведения",
     )
     image_address = models.URLField(
         null=True,
@@ -440,7 +440,6 @@ class PartnerProgram(models.Model):
             "basic_info": bool(
                 (self.name or "").strip()
                 and description
-                and len(description) >= 180
                 and (self.city or "").strip()
             ),
             "dates": dates_valid,
