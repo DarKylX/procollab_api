@@ -327,6 +327,7 @@ class PartnerProgramBaseSerializerMixin(serializers.ModelSerializer):
     legal_documents = serializers.SerializerMethodField()
     legal_settings = serializers.SerializerMethodField()
     can_export_contacts = serializers.SerializerMethodField()
+    short_description = serializers.SerializerMethodField(method_name="get_short_description")
 
     def get_materials(self, program: PartnerProgram):
         materials = program.materials.all()
@@ -439,6 +440,11 @@ class PartnerProgramBaseSerializerMixin(serializers.ModelSerializer):
         except PartnerProgramLegalSettings.DoesNotExist:
             return None
         return PartnerProgramLegalSettingsSerializer(settings).data
+
+    def get_short_description(self, program: PartnerProgram) -> str:
+        if not program.description:
+            return ""
+        return program.description[:125]
 
     def get_can_export_contacts(self, program: PartnerProgram) -> bool:
         user = self.context.get("user")
@@ -615,6 +621,8 @@ class PartnerProgramForUnregisteredUserSerializer(PartnerProgramBaseSerializerMi
             "is_verified",
             "name",
             "tag",
+            "description",
+            "short_description",
             "city",
             "company",
             "company_name",
