@@ -59,9 +59,9 @@ class RateProject(generics.CreateAPIView):
             criteria_qs.values_list("partner_program_id", flat=True).distinct()
         )
         if not criteria_qs.exists():
-            raise ValueError("Criteria not found")
+            raise ValueError("Критерии не найдены")
         if partner_program_ids.count() != 1:
-            raise ValueError("All criteria must belong to the same program")
+            raise ValueError("Все критерии должны относиться к одному чемпионату")
         program = criteria_qs.first().partner_program
 
         Expert.objects.get(user__id=user_id, programs=program)
@@ -74,14 +74,14 @@ class RateProject(generics.CreateAPIView):
         if not PartnerProgramProject.objects.filter(
             partner_program=program, project_id=project_id
         ).exists():
-            raise ValueError("Project is not linked to the program")
+            raise ValueError("Проект не привязан к этому чемпионату")
 
         if program.is_distributed_evaluation and not ProjectExpertAssignment.objects.filter(
             partner_program=program,
             project_id=project_id,
             expert__user_id=user_id,
         ).exists():
-            raise ValueError("you are not assigned to rate this project")
+            raise ValueError("Вы не назначены экспертом для оценки этого проекта")
 
         return data, criteria_to_get, program
 
@@ -106,7 +106,7 @@ class RateProject(generics.CreateAPIView):
                 if not user_has_scores and distinct_raters >= program.max_project_rates:
                     return Response(
                         {
-                            "error": "max project rates reached for this program",
+                            "error": "Достигнут лимит экспертных оценок для этого чемпионата",
                             "max_project_rates": program.max_project_rates,
                         },
                         status=status.HTTP_400_BAD_REQUEST,
@@ -516,7 +516,7 @@ class ProjectEvaluationSaveMixin(ExpertSubmissionAccessMixin, generics.GenericAP
         missing_ids = sorted(set(criteria_ids) - set(criteria_by_id))
         if missing_ids:
             raise ValidationError(
-                {"scores": f"Criteria do not belong to this program: {missing_ids}"}
+                {"scores": f"Критерии не относятся к этому чемпионату: {missing_ids}"}
             )
 
         for item in scores:
@@ -534,7 +534,7 @@ class ProjectEvaluationSaveMixin(ExpertSubmissionAccessMixin, generics.GenericAP
                 raise ValidationError(
                     {
                         "scores": (
-                            "All numeric criteria must be filled before submission."
+                            "Перед отправкой оценки заполните все числовые критерии."
                         )
                     }
                 )

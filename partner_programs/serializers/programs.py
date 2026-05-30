@@ -182,6 +182,8 @@ class PartnerProgramListSerializer(serializers.ModelSerializer):
     )
     is_user_liked = serializers.SerializerMethodField(method_name="get_is_user_liked")
     is_user_member = serializers.SerializerMethodField(method_name="get_is_user_member")
+    is_user_manager = serializers.SerializerMethodField(method_name="get_is_user_manager")
+    is_user_expert = serializers.SerializerMethodField(method_name="get_is_user_expert")
     participants_count = serializers.SerializerMethodField()
     participants_delta_week = serializers.SerializerMethodField()
     projects_count = serializers.SerializerMethodField()
@@ -223,6 +225,22 @@ class PartnerProgramListSerializer(serializers.ModelSerializer):
             return False
         return program.users.filter(pk=user.pk).exists()
 
+    def get_is_user_manager(self, program):
+        if hasattr(program, "is_user_manager"):
+            return bool(program.is_user_manager)
+        user = self._get_user()
+        if not user or not user.is_authenticated:
+            return False
+        return program.is_manager(user)
+
+    def get_is_user_expert(self, program):
+        if hasattr(program, "is_user_expert"):
+            return bool(program.is_user_expert)
+        user = self._get_user()
+        if not user or not user.is_authenticated:
+            return False
+        return program.experts.filter(user=user).exists()
+
     def get_company(self, program):
         return _company_summary(program.company)
 
@@ -246,7 +264,15 @@ class PartnerProgramListSerializer(serializers.ModelSerializer):
         return PartnerProgramLegalSettingsSerializer(settings).data
 
     def get_can_export_contacts(self, program: PartnerProgram) -> bool:
-        return can_view_participant_contacts(self._get_user(), program)
+        user = self._get_user()
+        if not user or not getattr(user, "is_authenticated", False):
+            return False
+        if getattr(user, "is_staff", False) or getattr(user, "is_superuser", False):
+            return True
+        return bool(
+            program.verification_status == PartnerProgram.VERIFICATION_STATUS_VERIFIED
+            and self.get_is_user_manager(program)
+        )
 
     def get_participants_count(self, program: PartnerProgram) -> int:
         return getattr(program, "participants_count", 0) or 0
@@ -304,6 +330,8 @@ class PartnerProgramListSerializer(serializers.ModelSerializer):
             "likes_count",
             "is_user_liked",
             "is_user_member",
+            "is_user_manager",
+            "is_user_expert",
         )
 
 

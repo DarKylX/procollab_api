@@ -1414,6 +1414,13 @@ class Command(BaseCommand):
 
         criteria_seed = PROGRAM_CRITERIA if fill_level == "full" else PROGRAM_CRITERIA[:3]
         expected_names = {name for name, _ in criteria_seed} | {"Комментарий"}
+        numeric_names = [name for name, _ in criteria_seed if name != "Комментарий"]
+        base_weight = 100 // len(numeric_names) if numeric_names else 0
+        weight_remainder = 100 % len(numeric_names) if numeric_names else 0
+        weights_by_name = {
+            name: base_weight + (1 if index < weight_remainder else 0)
+            for index, name in enumerate(numeric_names)
+        }
         Criteria.objects.filter(partner_program=program).exclude(
             name__in=expected_names
         ).delete()
@@ -1425,6 +1432,7 @@ class Command(BaseCommand):
                 "type": criteria_type,
                 "min_value": None if criteria_type == "str" else 1,
                 "max_value": None if criteria_type == "str" else 10,
+                "weight": 1 if criteria_type == "str" else weights_by_name.get(name, 1),
             }
             criteria = Criteria.objects.filter(
                 partner_program=program,
@@ -1568,7 +1576,7 @@ class Command(BaseCommand):
                 )
 
             evaluation.total_score = evaluation.calculate_total_score()
-            evaluation.comment = "Demo expert evaluation."
+            evaluation.comment = "Демо-оценка эксперта."
             if program_project.submitted:
                 evaluation.status = ProjectEvaluation.STATUS_SUBMITTED
                 evaluation.submitted_at = evaluation.submitted_at or timezone.now()

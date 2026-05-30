@@ -176,7 +176,7 @@ class ProjectEvaluation(models.Model):
         if not numeric_criteria:
             if require_complete:
                 raise ValidationError(
-                    {"criteria": "No numeric criteria are configured for scoring."}
+                    {"criteria": "Для оценки не настроены числовые критерии."}
                 )
             return None
 
@@ -194,7 +194,7 @@ class ProjectEvaluation(models.Model):
                     raise ValidationError(
                         {
                             "scores": (
-                                "All numeric criteria must be filled before submission."
+                                "Перед отправкой оценки заполните все числовые критерии."
                             )
                         }
                     )
@@ -205,7 +205,7 @@ class ProjectEvaluation(models.Model):
                     raise ValidationError(
                         {
                             "criteria": (
-                                "Numeric criteria must have a positive max_value."
+                                "У числовых критериев должен быть положительный максимальный балл."
                             )
                         }
                     )
@@ -228,7 +228,7 @@ class ProjectEvaluation(models.Model):
                 raise ValidationError(
                     {
                         "criteria": (
-                            "The sum of numeric criteria weights must be greater than 0."
+                            "Сумма весов числовых критериев должна быть больше нуля."
                         )
                     }
                 )
