@@ -839,6 +839,10 @@ class PartnerProgramReadinessView(APIView):
 class PartnerProgramLegalSettingsView(APIView):
     permission_classes = [IsAuthenticated, IsAdminOrManagerOfProgram]
 
+    def _refresh_program_readiness(self, program: PartnerProgram) -> None:
+        program.readiness = program.calculate_readiness()
+        program.save(update_fields=["readiness", "datetime_updated"])
+
     def get(self, request, pk):
         program = get_object_or_404(PartnerProgram, pk=pk)
         settings_obj, _ = PartnerProgramLegalSettings.objects.get_or_create(
@@ -861,6 +865,7 @@ class PartnerProgramLegalSettingsView(APIView):
         )
         serializer.is_valid(raise_exception=True)
         serializer.save()
+        self._refresh_program_readiness(program)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
@@ -870,6 +875,8 @@ class PartnerProgramAcceptOrganizerTermsView(APIView):
     def post(self, request, pk):
         program = get_object_or_404(PartnerProgram, pk=pk)
         settings_obj = accept_organizer_terms(program=program, user=request.user)
+        program.readiness = program.calculate_readiness()
+        program.save(update_fields=["readiness", "datetime_updated"])
         return Response(
             PartnerProgramLegalSettingsSerializer(settings_obj).data,
             status=status.HTTP_200_OK,
