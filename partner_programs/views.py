@@ -266,19 +266,34 @@ class PartnerProgramList(generics.ListCreateAPIView):
         if my_flag:
             if not user.is_authenticated:
                 return PartnerProgram.objects.none()
-            manager_qs = PartnerProgram.objects.filter(managers=user)
-            member_qs = PartnerProgram.objects.filter(partner_program_profiles__user=user)
-            expert_qs = PartnerProgram.objects.filter(experts__user=user)
+            Expert = apps.get_model("users", "Expert")
+            member_qs = PartnerProgramUserProfile.objects.filter(
+                partner_program=OuterRef("pk"),
+                user=user,
+            )
+            manager_qs = PartnerProgram.objects.filter(pk=OuterRef("pk"), managers=user)
+            expert_qs = Expert.objects.filter(programs=OuterRef("pk"), user=user)
             base_qs = (
-                (manager_qs | member_qs | expert_qs)
+                PartnerProgram.objects
                 .select_related("company", "legal_settings")
+                .annotate(
+                    my_member_match=Exists(member_qs),
+                    my_manager_match=Exists(manager_qs),
+                    my_expert_match=Exists(expert_qs),
+                )
+                .filter(
+                    Q(my_member_match=True)
+                    | Q(my_manager_match=True)
+                    | Q(my_expert_match=True)
+                )
                 .exclude(status=PartnerProgram.STATUS_ARCHIVED)
-                .distinct()
             )
         else:
             base_qs = super().get_queryset()
         participating_flag = self.request.query_params.get("participating")
-        if not participating_flag:
+        if my_flag:
+            qs = base_qs
+        elif not participating_flag:
             if not user.is_authenticated:
                 qs = base_qs.filter(is_private=False)
             elif getattr(user, "is_staff", False) or getattr(user, "is_superuser", False):
