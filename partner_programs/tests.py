@@ -133,6 +133,8 @@ class PartnerProgramPrivacyLegalTests(TestCase):
             "https://example.com/rules.pdf",
         )
         self.assertEqual(settings_response.data["additional_terms_text"], "Extra terms")
+        self.program.refresh_from_db()
+        self.assertFalse(self.program.readiness.get("legal_terms"))
 
         accept_response = self.client.post(
             f"/programs/{self.program.id}/legal-settings/accept-organizer-terms/",
@@ -145,6 +147,8 @@ class PartnerProgramPrivacyLegalTests(TestCase):
         settings = PartnerProgramLegalSettings.objects.get(program=self.program)
         self.assertEqual(settings.organizer_terms_accepted_by, self.manager)
         self.assertIsNotNone(settings.organizer_terms_accepted_at)
+        self.program.refresh_from_db()
+        self.assertTrue(self.program.readiness.get("legal_terms"))
 
     def test_register_requires_personal_data_consent(self):
         request = self.factory.post(
