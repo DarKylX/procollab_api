@@ -117,6 +117,12 @@ def _verified_company_name(program: PartnerProgram) -> str:
     if program.verification_status != PartnerProgram.VERIFICATION_STATUS_VERIFIED:
         return ""
 
+    if hasattr(program, "verified_company_name_value"):
+        return (
+            program.verified_company_name_value
+            or (program.company.name if program.company_id and program.company else "")
+        )
+
     from partner_programs.verification_services import (
         latest_approved_verification_request,
     )

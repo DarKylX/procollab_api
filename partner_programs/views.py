@@ -7,6 +7,7 @@ from django.contrib.contenttypes.models import ContentType
 from django.db import IntegrityError, transaction
 from django.db.models import (
     Count,
+    CharField,
     Exists,
     IntegerField,
     OuterRef,
@@ -55,6 +56,7 @@ from partner_programs.models import (
     PartnerProgramLegalSettings,
     PartnerProgramProject,
     PartnerProgramUserProfile,
+    PartnerProgramVerificationRequest,
 )
 from partner_programs.pagination import PartnerProgramPagination
 from partner_programs.permissions import (
@@ -232,6 +234,14 @@ class PartnerProgramList(generics.ListCreateAPIView):
             .annotate(total=Count("id"))
             .values("total")
         )
+        approved_company_names = (
+            PartnerProgramVerificationRequest.objects.filter(
+                program=OuterRef("pk"),
+                status=PartnerProgramVerificationRequest.STATUS_APPROVED,
+            )
+            .order_by("-decided_at", "-submitted_at", "-id")
+            .values("company_name")[:1]
+        )
         return qs.annotate(
             participants_count=Coalesce(
                 Subquery(participant_counts, output_field=IntegerField()), Value(0)
@@ -253,6 +263,9 @@ class PartnerProgramList(generics.ListCreateAPIView):
             ),
             views_count=Coalesce(
                 Subquery(views_counts, output_field=IntegerField()), Value(0)
+            ),
+            verified_company_name_value=Coalesce(
+                Subquery(approved_company_names, output_field=CharField()), Value("")
             ),
         )
 
