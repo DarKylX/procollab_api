@@ -3,6 +3,7 @@ from datetime import timedelta
 
 from django.apps import apps
 from django.contrib.auth import get_user_model
+from django.contrib.contenttypes.models import ContentType
 from django.db import IntegrityError, transaction
 from django.db.models import (
     Count,
@@ -29,6 +30,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from core.serializers import EmptySerializer, SetLikedSerializer, SetViewedSerializer
+from core.models import Like, View
 from core.services import add_view, set_like
 from core.utils import (
     XlsxFileToExport,
@@ -174,6 +176,7 @@ class PartnerProgramList(generics.ListCreateAPIView):
 
     def _with_list_counters(self, qs):
         week_ago = timezone.now() - timedelta(days=7)
+        program_content_type_id = ContentType.objects.get_for_model(PartnerProgram).pk
         participant_counts = (
             PartnerProgramUserProfile.objects.filter(partner_program=OuterRef("pk"))
             .values("partner_program")
@@ -211,6 +214,24 @@ class PartnerProgramList(generics.ListCreateAPIView):
             .annotate(total=Count("id"))
             .values("total")
         )
+        likes_counts = (
+            Like.objects.filter(
+                content_type_id=program_content_type_id,
+                object_id=OuterRef("pk"),
+            )
+            .values("object_id")
+            .annotate(total=Count("id"))
+            .values("total")
+        )
+        views_counts = (
+            View.objects.filter(
+                content_type_id=program_content_type_id,
+                object_id=OuterRef("pk"),
+            )
+            .values("object_id")
+            .annotate(total=Count("id"))
+            .values("total")
+        )
         return qs.annotate(
             participants_count=Coalesce(
                 Subquery(participant_counts, output_field=IntegerField()), Value(0)
@@ -226,6 +247,12 @@ class PartnerProgramList(generics.ListCreateAPIView):
             ),
             experts_count=Coalesce(
                 Subquery(expert_counts, output_field=IntegerField()), Value(0)
+            ),
+            likes_count=Coalesce(
+                Subquery(likes_counts, output_field=IntegerField()), Value(0)
+            ),
+            views_count=Coalesce(
+                Subquery(views_counts, output_field=IntegerField()), Value(0)
             ),
         )
 
@@ -284,21 +311,29 @@ class PartnerProgramList(generics.ListCreateAPIView):
                 verification_status=PartnerProgram.VERIFICATION_STATUS_VERIFIED
             )
 
+        qs = qs.order_by("-datetime_created", "-id")
         user = self.request.user
         qs = self._with_list_counters(qs)
         if not user.is_authenticated:
             return qs
 
+        program_content_type_id = ContentType.objects.get_for_model(PartnerProgram).pk
         member_qs = PartnerProgramUserProfile.objects.filter(
             partner_program=OuterRef("pk"),
             user=user,
         )
         manager_qs = PartnerProgram.objects.filter(pk=OuterRef("pk"), managers=user)
         expert_qs = PartnerProgram.objects.filter(pk=OuterRef("pk"), experts__user=user)
+        liked_qs = Like.objects.filter(
+            content_type_id=program_content_type_id,
+            object_id=OuterRef("pk"),
+            user=user,
+        )
         return qs.annotate(
             is_user_member=Exists(member_qs),
             is_user_manager=Exists(manager_qs),
             is_user_expert=Exists(expert_qs),
+            is_user_liked=Exists(liked_qs),
         )
 
 
