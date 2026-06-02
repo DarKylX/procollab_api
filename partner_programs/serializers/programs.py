@@ -200,9 +200,13 @@ class PartnerProgramListSerializer(serializers.ModelSerializer):
         return None
 
     def count_likes(self, program):
+        if hasattr(program, "likes_count"):
+            return program.likes_count
         return get_likes_count(program)
 
     def count_views(self, program):
+        if hasattr(program, "views_count"):
+            return program.views_count
         return get_views_count(program)
 
     def get_short_description(self, program):
@@ -211,6 +215,8 @@ class PartnerProgramListSerializer(serializers.ModelSerializer):
         return program.description[:125]
 
     def get_is_user_liked(self, obj):
+        if hasattr(obj, "is_user_liked"):
+            return bool(obj.is_user_liked)
         # fixme: copy-paste in every serializer...
         user = self._get_user()
         if user and user.is_authenticated:
